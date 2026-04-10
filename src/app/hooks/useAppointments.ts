@@ -24,6 +24,11 @@ interface PatientRecordInput {
   valid_id_url?: string;
 }
 
+interface WalkinPatientRecordInput extends PatientRecordInput {
+  notes?: string;
+  created_by?: string;
+}
+
 function mapRow(a: any): Appointment {
   return {
     id: a.id,
@@ -147,6 +152,46 @@ export function useAppointments() {
     return insertedPatient?.id as string;
   };
 
+  const ensureWalkinPatientRecord = async (payload: WalkinPatientRecordInput) => {
+    const { data: walkinRows, error: walkinLookupError } = await supabase
+      .from('patient_walkin')
+      .select('id, full_name, email, contact_number, date_of_birth, gender, address, emergency_contact_name, emergency_contact_number, valid_id_url')
+      .order('created_at', { ascending: false });
+
+    if (walkinLookupError) throw walkinLookupError;
+
+    const existingWalkin = findMatchingPatient(walkinRows || [], payload);
+    const normalizedEmail = payload.email?.trim().toLowerCase() || '';
+
+    if (existingWalkin) {
+      return existingWalkin.id as string;
+    }
+
+    const insertPayload = {
+      full_name: payload.full_name,
+      email: normalizedEmail || null,
+      contact_number: payload.contact_number || null,
+      date_of_birth: payload.date_of_birth || null,
+      gender: payload.gender || null,
+      address: payload.address || null,
+      emergency_contact_name: payload.emergency_contact_name || null,
+      emergency_contact_number: payload.emergency_contact_number || null,
+      valid_id_url: payload.valid_id_url || null,
+      notes: payload.notes || null,
+      created_by: payload.created_by || null,
+    };
+
+    const { data: insertedWalkin, error: insertError } = await supabase
+      .from('patient_walkin')
+      .insert([insertPayload])
+      .select('id')
+      .single();
+
+    if (insertError) throw insertError;
+
+    return insertedWalkin?.id as string;
+  };
+
   const fetchAppointments = async () => {
     try {
       setLoading(true);
@@ -182,56 +227,59 @@ export function useAppointments() {
   }, []);
 
   const approveAppointment = async (id: string) => {
-    try {
-      toast.loading('Approving appointment...');
-      const { data: appointmentRow, error: appointmentLookupError } = await supabase
-        .from('appointments')
-        .select('*')
-        .eq('id', id)
-        .single();
+  try {
+    toast.loading('Approving appointment...');
+    const { data: appointmentRow, error: appointmentLookupError } = await supabase
+      .from('appointments')
+      .select('*')
+      .eq('id', id)
+      .single();
 
-      if (appointmentLookupError) throw appointmentLookupError;
+    if (appointmentLookupError) throw appointmentLookupError;
 
-      const patientId = await ensurePatientRecord({
+    // ── FIX: only create patient record for online appointments ──
+    let patientId = appointmentRow.patient_id || null;
+    if (appointmentRow.registration_source !== 'walk-in') {
+      patientId = await ensurePatientRecord({
         full_name: appointmentRow.patient_name || 'Unnamed Patient',
         email: appointmentRow.patient_email || '',
         contact_number: appointmentRow.patient_phone || '',
         valid_id_url: appointmentRow.valid_id_url || '',
       });
-
-      const { error: err } = await supabase
-        .from('appointments')
-        .update({ status: 'approved', patient_id: patientId })
-        .eq('id', id);
-      if (err) throw err;
-
-      // ── Send notification to patient ──
-      if (appointmentRow.patient_email) {
-        const aptDate = appointmentRow.date
-          ? new Date(appointmentRow.date + 'T12:00:00').toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
-          : 'your scheduled date';
-        await supabase.from('notifications').insert({
-          id: `notif-approve-${id}-${Date.now()}`,
-          patient_id: patientId,
-          patient_email: appointmentRow.patient_email,
-          type: 'Approved',
-          title: 'Appointment Approved! ✅',
-          message: `Great news! Your appointment on ${aptDate} at ${appointmentRow.time} with ${appointmentRow.doctor_name || 'the clinic doctor'} has been approved. Please arrive 10 minutes early.`,
-          timestamp: new Date().toISOString(),
-          read: false,
-        });
-      }
-
-      toast.dismiss();
-      toast.success('Appointment approved!');
-      await fetchAppointments();
-    } catch (err: any) {
-      console.error('[approveAppointment] error:', err);
-      toast.dismiss();
-      toast.error(`Failed to approve: ${err?.message || 'Unknown error'}`);
     }
-  };
 
+    const { error: err } = await supabase
+      .from('appointments')
+      .update({ status: 'approved', patient_id: patientId })
+      .eq('id', id);
+    if (err) throw err;
+
+    // ── Send notification to patient ──
+    if (appointmentRow.patient_email) {
+      const aptDate = appointmentRow.date
+        ? new Date(appointmentRow.date + 'T12:00:00').toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+        : 'your scheduled date';
+      await supabase.from('notifications').insert({
+        id: `notif-approve-${id}-${Date.now()}`,
+        patient_id: patientId,
+        patient_email: appointmentRow.patient_email,
+        type: 'Approved',
+        title: 'Appointment Approved! ✅',
+        message: `Great news! Your appointment on ${aptDate} at ${appointmentRow.time} with ${appointmentRow.doctor_name || 'the clinic doctor'} has been approved. Please arrive 10 minutes early.`,
+        timestamp: new Date().toISOString(),
+        read: false,
+      });
+    }
+
+    toast.dismiss();
+    toast.success('Appointment approved!');
+    await fetchAppointments();
+  } catch (err: any) {
+    console.error('[approveAppointment] error:', err);
+    toast.dismiss();
+    toast.error(`Failed to approve: ${err?.message || 'Unknown error'}`);
+  }
+};
   const rejectAppointment = async (id: string, remarks?: string) => {
     try {
       toast.loading('Rejecting appointment...');
@@ -384,7 +432,7 @@ export function useAppointments() {
         throw new Error('This patient already has an appointment in the selected time slot.');
       }
 
-      const patientId = await ensurePatientRecord({
+      await ensureWalkinPatientRecord({
         full_name: form.patient_record?.full_name || form.patient_name,
         email: form.patient_record?.email || form.patient_email,
         contact_number: storedPhone,
@@ -393,19 +441,22 @@ export function useAppointments() {
         address: form.patient_record?.address,
         emergency_contact_name: form.patient_record?.emergency_contact_name,
         emergency_contact_number: form.patient_record?.emergency_contact_number,
+        valid_id_url: form.patient_record?.valid_id_url,
       });
 
       const appointmentPayload = {
         patient_name: form.patient_name,
         patient_email: form.patient_email,
         patient_phone: storedPhone,
-        patient_id: patientId,
+        patient_id: null,
         doctor_name: form.doctor_name,
         date: form.date,
         time: form.time,
         type: form.type,
         reason: form.reason,
         status: form.status,
+        registration_source: 'walk-in',
+        valid_id_url: form.patient_record?.valid_id_url || null,
       };
 
       const { data: insertedRow, error: err } = await supabase

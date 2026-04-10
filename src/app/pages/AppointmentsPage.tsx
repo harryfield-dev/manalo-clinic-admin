@@ -1756,7 +1756,7 @@ export function AppointmentsPage() {
       <ConfirmModal
         open={!!appointmentToRemove}
         title={`Remove ${appointmentToRemove?.patientName || "appointment"}?`}
-        description="This will permanently delete the appointment from the database."
+        description="Are you sure do you want to remove this item?."
         confirmLabel="Remove"
         variant="danger"
         onConfirm={handleRemoveAppointment}

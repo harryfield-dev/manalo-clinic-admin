@@ -12,7 +12,7 @@ import { supabase } from '../lib/supabase';
 interface PatientWithConsultDate extends Patient {
   lastConsultationDate?: string;
   identityKey?: string;
-  recordOrigin?: 'patients' | 'appointments';
+  recordOrigin?: 'patients' | 'appointments' | 'patient_walkin';
   avgRating?: number | null;
   ratingCount?: number;
 }
@@ -403,12 +403,30 @@ function PatientDetailModal({ patient, onClose }: { patient: Patient; onClose: (
 
 export function PatientsPage() {
   const [patients, setPatients] = useState<PatientWithConsultDate[]>([]);
+  const [hiddenPatientKeys, setHiddenPatientKeys] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return [];
+
+    try {
+      const stored = window.localStorage.getItem('hidden-patient-records');
+      const parsed = stored ? JSON.parse(stored) : [];
+      return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterGender, setFilterGender] = useState('all');
+  const [filterSource, setFilterSource] = useState<'all' | 'online' | 'walk-in'>('all');
   const [selectedPatient, setSelectedPatient] = useState<PatientWithConsultDate | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<PatientWithConsultDate | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    window.localStorage.setItem('hidden-patient-records', JSON.stringify(hiddenPatientKeys));
+  }, [hiddenPatientKeys]);
 
   useEffect(() => {
     const loadPatients = async () => {
@@ -427,6 +445,11 @@ export function PatientsPage() {
           .in('status', ['approved', 'completed'])
           .order('created_at', { ascending: false });
 
+        const { data: walkinData, error: walkinError } = await supabase
+          .from('patient_walkin')
+          .select('*')
+          .order('created_at', { ascending: false });
+
         // Fetch all ratings in one query to show badges on list rows
         const { data: allRatings } = await supabase
           .from('appointment_ratings')
@@ -441,7 +464,7 @@ export function PatientsPage() {
           entry.sum += r.rating;
         }
 
-        if (error && !apptData) { setLoading(false); return; }
+        if ((error && !apptData) || walkinError) { setLoading(false); return; }
 
         // Build a map of the latest approved appointment per patient identity.
         const apptMap = new Map<string, any>();
@@ -458,8 +481,9 @@ export function PatientsPage() {
           }
         }
 
-        // Merge: patients table first, then add any approved-appointment patients not in patients table
+        // Merge: online patients first, then manual walk-ins, then approved-appointment patients not found in either source.
         const patientRows = data || [];
+        const walkinRows = walkinData || [];
         const patientKeys = new Set(
           patientRows.map((p: any) =>
             getPatientIdentityKey({
@@ -470,11 +494,32 @@ export function PatientsPage() {
             }),
           ),
         );
+        const walkinKeys = new Set(
+          walkinRows.map((p: any) =>
+            getPatientIdentityKey({
+              email: p.email,
+              phone: p.contact_number,
+              name: p.full_name,
+              fallbackId: p.id,
+            }),
+          ),
+        );
 
-        // Add appointment-based patients not already in patients table
+        const filteredWalkinRows = walkinRows.filter((p: any) => {
+          const key = getPatientIdentityKey({
+            email: p.email,
+            phone: p.contact_number,
+            name: p.full_name,
+            fallbackId: p.id,
+          });
+
+          return !patientKeys.has(key);
+        });
+
+        // Add appointment-based patients not already in patients or patient_walkin tables
         const extraPatients: any[] = [];
         for (const [key, appt] of apptMap.entries()) {
-          if (!patientKeys.has(key)) {
+          if (!patientKeys.has(key) && !walkinKeys.has(key)) {
             extraPatients.push({
               id: appt.id,
               full_name: appt.patient_name || 'Walk-in Patient',
@@ -490,11 +535,16 @@ export function PatientsPage() {
               identity_key: key,
               _fromAppointment: true,
               _apptDate: appt.date,
+              registration_source: 'walk-in',
             });
           }
         }
 
-        const allRows = [...patientRows, ...extraPatients];
+        const allRows = [
+          ...patientRows,
+          ...filteredWalkinRows.map((p: any) => ({ ...p, _fromWalkinTable: true, registration_source: 'walk-in' })),
+          ...extraPatients,
+        ];
 
         const result: PatientWithConsultDate[] = await Promise.all(allRows.map(async (p: any) => {
           let consultations: Consultation[] = [];
@@ -558,9 +608,9 @@ export function PatientsPage() {
             ratingCount,
             registrationSource: inferRegistrationSource({
               email: p.email,
-              registrationSource: p.registration_source,
+              registrationSource: p._fromWalkinTable ? 'walk-in' : p.registration_source,
             }),
-            recordOrigin: p._fromAppointment ? 'appointments' : 'patients',
+            recordOrigin: p._fromAppointment ? 'appointments' : p._fromWalkinTable ? 'patient_walkin' : 'patients',
           };
         }));
 
@@ -581,27 +631,41 @@ export function PatientsPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'patients' }, () => {
         loadPatients();
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'patient_walkin' }, () => {
+        loadPatients();
+      })
       .subscribe();
 
     return () => { supabase.removeChannel(channel); };
   }, [reloadKey]);
 
   const filtered = patients.filter(p => {
+    const patientKey = p.identityKey || p.id;
+    if (hiddenPatientKeys.includes(patientKey)) return false;
+
+    const registrationSource =
+      p.registrationSource ||
+      inferRegistrationSource({ email: p.email });
     const matchSearch =
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       (p.email || '').toLowerCase().includes(search.toLowerCase());
     const matchGender = filterGender === 'all' || p.gender === filterGender;
-    return matchSearch && matchGender;
+    const matchSource = filterSource === 'all' || registrationSource === filterSource;
+    return matchSearch && matchGender && matchSource;
   });
 
   const handleRemovePatient = () => {
     if (!deleteTarget) return;
     const sourceName = deleteTarget.name || 'this patient';
     // UI-only removal — no database changes. The patient's account and data remain intact.
-    setPatients((current) => current.filter((patient) => patient.id !== deleteTarget.id));
-    setSelectedPatient((current) => (current?.id === deleteTarget.id ? null : current));
+    const hiddenKey = deleteTarget.identityKey || deleteTarget.id;
+    setHiddenPatientKeys((current) => (current.includes(hiddenKey) ? current : [...current, hiddenKey]));
+    setSelectedPatient((current) => {
+      const currentKey = current?.identityKey || current?.id;
+      return currentKey === hiddenKey ? null : current;
+    });
     setDeleteTarget(null);
-    toast.success(`${sourceName} removed from the current view. Their data remains in the database.`);
+    toast.success(`${sourceName} removed from the patient records list. Their data remains in the database.`);
   };
 
   return (
@@ -618,7 +682,23 @@ export function PatientsPage() {
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or email..." className="bg-transparent outline-none flex-1"
             style={{ fontFamily: 'var(--font-body)', fontSize: '0.875rem', color: '#0A2463' }} />
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          {([
+            ['all', 'All Sources'],
+            ['online', 'Online'],
+            ['walk-in', 'Walk-In'],
+          ] as const).map(([sourceKey, label]) => (
+            <button key={sourceKey} onClick={() => setFilterSource(sourceKey)} className="px-4 py-2.5 rounded-xl"
+              style={{
+                fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: filterSource === sourceKey ? 600 : 400,
+                background: filterSource === sourceKey ? '#1B4FD8' : '#fff', color: filterSource === sourceKey ? '#fff' : '#6B7A99',
+                border: `1px solid ${filterSource === sourceKey ? 'transparent' : '#E8F1FF'}`
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2 flex-wrap">
           {(['all', 'male', 'female'] as const).map(g => (
             <button key={g} onClick={() => setFilterGender(g)} className="px-4 py-2.5 rounded-xl capitalize"
               style={{
@@ -750,8 +830,7 @@ export function PatientsPage() {
       <ConfirmModal
         open={!!deleteTarget}
         title={`Remove ${deleteTarget?.name || 'patient record'} from view?`}
-        description="This will remove the patient from the current list view only. Their account and all data remain safely stored in the database."
-        confirmLabel="Remove from List"
+        description="This will remove the patient from the current list view only."
         variant="danger"
         onConfirm={handleRemovePatient}
         onCancel={() => setDeleteTarget(null)}

@@ -536,7 +536,7 @@ export function DoctorsPage() {
       <ConfirmModal
         open={!!doctorToRemove}
         title={`Remove ${doctorToRemove?.name || 'doctor'}?`}
-        description="This will permanently remove the doctor profile from the database."
+        description="Are you sure do you want to remove this item?"
         confirmLabel="Remove"
         variant="danger"
         onConfirm={handleRemoveDoctor}

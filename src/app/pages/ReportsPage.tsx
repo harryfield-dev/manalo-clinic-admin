@@ -44,6 +44,45 @@ function StatCard({ label, value, sub, icon, color, bg }: any) {
   );
 }
 
+function VisitPatternTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+
+  const point = payload[0]?.payload;
+  if (!point) return null;
+
+  return (
+    <div
+      style={{
+        background: 'rgba(255, 255, 255, 0.96)',
+        border: '1px solid #D8E7FF',
+        borderRadius: 18,
+        boxShadow: '0 16px 36px rgba(10, 36, 99, 0.12)',
+        padding: '12px 14px',
+        minWidth: 120,
+      }}
+    >
+      <div style={{ fontFamily: 'var(--font-heading)', color: '#334155', fontSize: '0.86rem', fontWeight: 700, marginBottom: 8 }}>
+        {label}
+      </div>
+      <div style={{ fontFamily: 'var(--font-body)', color: '#3B82F6', fontSize: '0.82rem', fontWeight: 700, marginBottom: 6 }}>
+        Total : {point.total}
+      </div>
+      <div style={{ fontFamily: 'var(--font-body)', color: '#10B981', fontSize: '0.82rem', fontWeight: 700, marginBottom: 6 }}>
+        Completed : {point.completed}
+      </div>
+      <div style={{ fontFamily: 'var(--font-body)', color: '#F59E0B', fontSize: '0.82rem', fontWeight: 700, marginBottom: 6 }}>
+        Pending : {point.pending}
+      </div>
+      <div style={{ fontFamily: 'var(--font-body)', color: '#059669', fontSize: '0.82rem', fontWeight: 700, marginBottom: 6 }}>
+        Approved : {point.approved}
+      </div>
+      <div style={{ fontFamily: 'var(--font-body)', color: '#EF4444', fontSize: '0.82rem', fontWeight: 700 }}>
+        Rejected : {point.rejected}
+      </div>
+    </div>
+  );
+}
+
 // ── Pure jsPDF helper ──────────────────────────────────────────────────────
 function buildPDF(opts: {
   reportType: string;
@@ -331,10 +370,18 @@ export function ReportsPage() {
     return { month: MONTHS[m], count };
   });
 
-  const weeklyVisits = DAYS_SHORT.map((day, i) => ({
-    day,
-    visits: appointments.filter(a => new Date(a.date).getDay() === DAYS_INDEX[i]).length,
-  }));
+  const weeklyVisits = DAYS_SHORT.map((day, i) => {
+    const dayAppointments = appointments.filter(a => new Date(a.date).getDay() === DAYS_INDEX[i]);
+
+    return {
+      day,
+      pending: dayAppointments.filter(a => a.status === 'pending').length,
+      approved: dayAppointments.filter(a => a.status === 'approved').length,
+      completed: dayAppointments.filter(a => a.status === 'completed').length,
+      rejected: dayAppointments.filter(a => a.status === 'rejected').length,
+      total: dayAppointments.length,
+    };
+  });
 
   // ── Export PDF (pure jsPDF, no html2canvas) ────────────────────────────
   const exportToPDF = async () => {
@@ -361,26 +408,19 @@ export function ReportsPage() {
 
   return (
     <div className="p-4 md:p-8 space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex gap-2">
-          {/* Export PDF */}
-          <motion.button
-            whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.97 }}
-            onClick={handleExport}
-            disabled={loading}
-            className="flex items-center gap-2 px-7 py-2.5 rounded-xl text-white ml-353"
-            style={{ background: loading ? '#6B7A99' : 'linear-gradient(135deg, #1B4FD8, #3A86FF)', fontFamily: 'var(--font-body)', fontSize: '0.875rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer' }}
-          >
-            {exported
-              ? <CheckCircle className="w-4 h-4" />
-              : <FileDown className="w-4 h-4" />
-            }
-            Export PDF
-          </motion.button>
-        </div>
-      </div>
-
+  {/* Header */}
+  <div className="flex justify-end">
+    <motion.button
+      whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.97 }}
+      onClick={handleExport}
+      disabled={loading}
+      className="flex items-center gap-2 px-7 py-2.5 rounded-xl text-white"
+      style={{ background: loading ? '#6B7A99' : 'linear-gradient(135deg, #1B4FD8, #3A86FF)', fontFamily: 'var(--font-body)', fontSize: '0.875rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer' }}
+    >
+      {exported ? <CheckCircle className="w-4 h-4" /> : <FileDown className="w-4 h-4" />}
+      <span className="hidden sm:inline">Export PDF</span>
+    </motion.button>
+  </div>
       {/* Report Config */}
       <div className="rounded-2xl p-5 flex flex-col sm:flex-row gap-4 items-start sm:items-center"
         style={{ background: '#fff', border: '1px solid #E8F1FF', boxShadow: '0 2px 12px rgba(10, 36, 99, 0.06)' }}>
@@ -453,21 +493,48 @@ export function ReportsPage() {
           {loading ? (
             <div className="flex items-center justify-center h-44"><Loader2 className="w-8 h-8 animate-spin" style={{ color: '#3A86FF' }} /></div>
           ) : (
-            <ResponsiveContainer width="100%" height={180}>
-              <AreaChart data={weeklyVisits}>
-                <defs>
-                  <linearGradient id="visitGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#1B4FD8" stopOpacity={0.15} />
-                    <stop offset="95%" stopColor="#1B4FD8" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#E8F1FF" />
-                <XAxis dataKey="day" tick={{ fontFamily: 'var(--font-body)', fontSize: 12, fill: '#6B7A99' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontFamily: 'var(--font-body)', fontSize: 12, fill: '#6B7A99' }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip contentStyle={{ fontFamily: 'var(--font-body)', borderRadius: 12, border: '1px solid #E8F1FF' }} />
-                <Area type="monotone" dataKey="visits" stroke="#1B4FD8" strokeWidth={2.5} fill="url(#visitGrad)" />
-              </AreaChart>
-            </ResponsiveContainer>
+            <div
+              className="rounded-2xl overflow-hidden"
+              style={{
+                background: 'linear-gradient(180deg, #FFFFFF 0%, #F8FBFF 100%)',
+                border: '1px solid #EEF4FF',
+              }}
+            >
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={weeklyVisits} margin={{ top: 18, right: 10, left: -14, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="visitPatternFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#14B8A6" stopOpacity={0.24} />
+                      <stop offset="70%" stopColor="#14B8A6" stopOpacity={0.08} />
+                      <stop offset="100%" stopColor="#14B8A6" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#DCEBFF" strokeDasharray="3 3" vertical />
+                  <XAxis
+                    dataKey="day"
+                    tick={{ fontFamily: 'var(--font-body)', fontSize: 12, fill: '#64748B' }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fontFamily: 'var(--font-body)', fontSize: 12, fill: '#64748B' }}
+                    axisLine={false}
+                    tickLine={false}
+                    allowDecimals={false}
+                  />
+                  <Tooltip cursor={{ stroke: '#C7D2FE', strokeDasharray: '4 4' }} content={<VisitPatternTooltip />} />
+                  <Area
+                    type="monotone"
+                    dataKey="total"
+                    stroke="#14B8A6"
+                    strokeWidth={2.5}
+                    fill="url(#visitPatternFill)"
+                    dot={{ r: 0 }}
+                    activeDot={{ r: 4, fill: '#F59E0B', stroke: '#FFFFFF', strokeWidth: 2 }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           )}
         </div>
 

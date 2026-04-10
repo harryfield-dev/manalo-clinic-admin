@@ -53,6 +53,7 @@ function mapRow(a: any): Appointment {
 
 export function useAppointments() {
   const [data, setData] = useState<Appointment[]>([]);
+  const [deletedData, setDeletedData] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creatingWalkin, setCreatingWalkin] = useState(false);
@@ -90,6 +91,7 @@ export function useAppointments() {
     const { data: patientRows, error: patientLookupError } = await supabase
       .from('patients')
       .select('id, full_name, email, contact_number, date_of_birth, gender, address, emergency_contact_name, emergency_contact_number, valid_id_url, status')
+      .is('deleted_at', null)
       .order('created_at', { ascending: false });
 
     if (patientLookupError) throw patientLookupError;
@@ -156,6 +158,7 @@ export function useAppointments() {
     const { data: walkinRows, error: walkinLookupError } = await supabase
       .from('patient_walkin')
       .select('id, full_name, email, contact_number, date_of_birth, gender, address, emergency_contact_name, emergency_contact_number, valid_id_url')
+      .is('deleted_at', null)
       .order('created_at', { ascending: false });
 
     if (walkinLookupError) throw walkinLookupError;
@@ -195,13 +198,24 @@ export function useAppointments() {
   const fetchAppointments = async () => {
     try {
       setLoading(true);
-      const { data: rows, error: err } = await supabase
-        .from('appointments')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const [activeRes, deletedRes] = await Promise.all([
+        supabase
+          .from('appointments')
+          .select('*')
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('appointments')
+          .select('*')
+          .not('deleted_at', 'is', null)
+          .order('deleted_at', { ascending: false }),
+      ]);
 
-      if (err) throw err;
-      setData((rows || []).map(mapRow));
+      if (activeRes.error) throw activeRes.error;
+      if (deletedRes.error) throw deletedRes.error;
+
+      setData((activeRes.data || []).map(mapRow));
+      setDeletedData((deletedRes.data || []).map(mapRow));
     } catch (err: any) {
       console.error('[fetchAppointments] error:', err);
       setError(err.message);
@@ -233,6 +247,7 @@ export function useAppointments() {
       .from('appointments')
       .select('*')
       .eq('id', id)
+      .is('deleted_at', null)
       .single();
 
     if (appointmentLookupError) throw appointmentLookupError;
@@ -285,7 +300,7 @@ export function useAppointments() {
       toast.loading('Rejecting appointment...');
 
       // Fetch appointment details for notification
-      const { data: aptData } = await supabase.from('appointments').select('*').eq('id', id).single();
+      const { data: aptData } = await supabase.from('appointments').select('*').eq('id', id).is('deleted_at', null).single();
 
       const { error: err } = await supabase
         .from('appointments')
@@ -296,7 +311,7 @@ export function useAppointments() {
 
       // ── Always send notification to patient ──
       if (aptData?.patient_email) {
-        const { data: patient } = await supabase.from('patients').select('id').eq('email', aptData.patient_email).maybeSingle();
+        const { data: patient } = await supabase.from('patients').select('id').eq('email', aptData.patient_email).is('deleted_at', null).maybeSingle();
         const aptDate = aptData.date
           ? new Date(aptData.date + 'T12:00:00').toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })
           : 'your scheduled date';
@@ -329,7 +344,7 @@ export function useAppointments() {
     try {
       toast.loading('Marking as completed...');
 
-      const { data: aptData } = await supabase.from('appointments').select('*').eq('id', id).single();
+      const { data: aptData } = await supabase.from('appointments').select('*').eq('id', id).is('deleted_at', null).single();
 
       const { error: err } = await supabase
         .from('appointments')
@@ -340,7 +355,7 @@ export function useAppointments() {
 
       // ── Send Completed notification to patient ──
       if (aptData?.patient_email) {
-        const { data: patient } = await supabase.from('patients').select('id').eq('email', aptData.patient_email).maybeSingle();
+        const { data: patient } = await supabase.from('patients').select('id').eq('email', aptData.patient_email).is('deleted_at', null).maybeSingle();
         const aptDate = aptData.date
           ? new Date(aptData.date + 'T12:00:00').toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })
           : 'your appointment';
@@ -409,6 +424,7 @@ export function useAppointments() {
       const { data: existingRows, error: duplicateError } = await supabase
         .from('appointments')
         .select('id, patient_name, patient_email, patient_phone, status')
+        .is('deleted_at', null)
         .eq('date', form.date)
         .eq('time', form.time)
         .in('status', ['pending', 'approved', 'completed']);
@@ -485,13 +501,53 @@ export function useAppointments() {
       toast.loading('Removing appointment...');
       const { error: deleteError } = await supabase
         .from('appointments')
-        .delete()
+        .update({ deleted_at: new Date().toISOString() })
         .eq('id', appointment.id);
 
       if (deleteError) throw deleteError;
 
       toast.dismiss();
-      toast.success(`Removed appointment for ${appointment.patientName}.`);
+      toast.success(`Moved ${appointment.patientName}'s appointment to Recently Deleted.`);
+      await fetchAppointments();
+    } catch (err: any) {
+      toast.dismiss();
+      toast.error(`Failed to remove appointment: ${err?.message || 'Unknown error'}`);
+      throw err;
+    }
+  };
+
+  const recoverAppointment = async (appointment: Appointment) => {
+    try {
+      toast.loading('Recovering appointment...');
+      const { error } = await supabase
+        .from('appointments')
+        .update({ deleted_at: null })
+        .eq('id', appointment.id);
+
+      if (error) throw error;
+
+      toast.dismiss();
+      toast.success(`Recovered appointment for ${appointment.patientName}.`);
+      await fetchAppointments();
+    } catch (err: any) {
+      toast.dismiss();
+      toast.error(`Failed to recover appointment: ${err?.message || 'Unknown error'}`);
+      throw err;
+    }
+  };
+
+  const permanentlyDeleteAppointment = async (appointment: Appointment) => {
+    try {
+      toast.loading('Deleting appointment permanently...');
+      const { error } = await supabase
+        .from('appointments')
+        .delete()
+        .eq('id', appointment.id);
+
+      if (error) throw error;
+
+      toast.dismiss();
+      toast.success(`Permanently deleted ${appointment.patientName}'s appointment.`);
       await fetchAppointments();
     } catch (err: any) {
       toast.dismiss();
@@ -502,6 +558,7 @@ export function useAppointments() {
 
   return {
     data,
+    deletedData,
     loading,
     error,
     approveAppointment,
@@ -510,6 +567,8 @@ export function useAppointments() {
     creatingWalkin,
     createWalkin,
     deleteAppointment,
+    recoverAppointment,
+    permanentlyDeleteAppointment,
     refetch: fetchAppointments,
   };
 }

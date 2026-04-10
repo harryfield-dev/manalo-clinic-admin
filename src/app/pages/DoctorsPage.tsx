@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Edit, X, Phone, Mail, Calendar, Users, Clock, CheckCircle, AlertCircle, Coffee, Loader2, Trash2 } from 'lucide-react';
+import { Plus, Edit, X, Phone, Mail, CheckCircle, AlertCircle, Coffee, Loader2, Trash2, RotateCcw } from 'lucide-react';
 import { Doctor, DoctorStatus } from '../data/mockData';
 import { useDoctors } from '../hooks/useDoctors';
 import { supabase } from '../lib/supabase';
@@ -212,10 +212,13 @@ function DoctorModal({ doctor, clinicSchedule, onClose, onSave }: {
 }
 
 export function DoctorsPage() {
-  const { data, loading, updateStatus, refetch } = useDoctors();
+  const { data, deletedData, loading, updateStatus, refetch, deleteDoctor, recoverDoctor, permanentlyDeleteDoctor } = useDoctors();
   const [modal, setModal] = useState<{ type: 'add' | 'edit'; doctor?: Doctor } | null>(null);
   const [clinicSchedule, setClinicSchedule] = useState<DoctorScheduleDay[]>(DEFAULT_DOCTOR_SCHEDULE);
   const [doctorToRemove, setDoctorToRemove] = useState<Doctor | null>(null);
+  const [doctorToRecover, setDoctorToRecover] = useState<Doctor | null>(null);
+  const [doctorToDeletePermanently, setDoctorToDeletePermanently] = useState<Doctor | null>(null);
+  const [activeTab, setActiveTab] = useState<'active' | 'deleted'>('active');
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
 
@@ -248,6 +251,9 @@ export function DoctorsPage() {
     const matchStatus = filterStatus === 'all' || d.status === filterStatus;
     return matchSearch && matchStatus;
   });
+  const filteredDeleted = deletedData.filter(d =>
+    d.name.toLowerCase().includes(search.toLowerCase()) || d.specialization.toLowerCase().includes(search.toLowerCase()),
+  );
 
   const getDoctorSchedule = (doctor: Doctor) => doctor.schedule.length > 0 ? doctor.schedule : clinicSchedule;
 
@@ -295,19 +301,39 @@ export function DoctorsPage() {
     if (!doctorToRemove) return;
 
     const doctorName = doctorToRemove.name;
-    const { error } = await supabase
-      .from('doctors')
-      .delete()
-      .eq('id', doctorToRemove.id);
-
-    if (error) {
+    try {
+      await deleteDoctor(doctorToRemove.id);
+    } catch {
       toast.error(`Failed to remove ${doctorName}.`);
       return;
     }
 
-    toast.success(`${doctorName} was removed.`);
+    toast.success(`${doctorName} was moved to Recently Deleted.`);
     setDoctorToRemove(null);
-    refetch();
+  };
+
+  const handleRecoverDoctor = async () => {
+    if (!doctorToRecover) return;
+
+    try {
+      await recoverDoctor(doctorToRecover.id);
+      toast.success(`${doctorToRecover.name} was recovered.`);
+      setDoctorToRecover(null);
+    } catch {
+      toast.error(`Failed to recover ${doctorToRecover.name}.`);
+    }
+  };
+
+  const handlePermanentDeleteDoctor = async () => {
+    if (!doctorToDeletePermanently) return;
+
+    try {
+      await permanentlyDeleteDoctor(doctorToDeletePermanently.id);
+      toast.success(`${doctorToDeletePermanently.name} was permanently deleted.`);
+      setDoctorToDeletePermanently(null);
+    } catch {
+      toast.error(`Failed to permanently delete ${doctorToDeletePermanently.name}.`);
+    }
   };
 
   return (
@@ -315,14 +341,48 @@ export function DoctorsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
 
-      </div>
-      <motion.button whileHover={{ scale: 1.05, boxShadow: '0 8px 24px rgba(27, 79, 216, 0.3)' }} whileTap={{ scale: 0.97 }}
-        onClick={() => setModal({ type: 'add' })}
-        className="flex items-center gap-2 px-8 py-2.5 rounded-xl text-white ml-auto"
-        style={{ background: 'linear-gradient(135deg, #1B4FD8, #3A86FF)', fontFamily: 'var(--font-body)', fontSize: '0.875rem', fontWeight: 600 }}>
-        <Plus className="w-4 h-4" /> Add Doctor
-      </motion.button>
+   <div className="flex items-center justify-between gap-4 w-full">
+  {/* Tabs — LEFT */}
+  <div className="flex flex-wrap gap-2">
+    {[
+      { key: 'active', label: 'Doctors', count: data.length },
+      { key: 'deleted', label: 'Recently Deleted', count: deletedData.length },
+    ].map((tab) => (
+      <button
+        key={tab.key}
+        onClick={() => setActiveTab(tab.key as 'active' | 'deleted')}
+        className="flex items-center gap-2 px-4 py-2.5 rounded-xl"
+        style={{
+          fontFamily: 'var(--font-body)',
+          fontSize: '0.82rem',
+          fontWeight: activeTab === tab.key ? 700 : 500,
+          background: activeTab === tab.key ? '#0A2463' : '#fff',
+          color: activeTab === tab.key ? '#fff' : '#6B7A99',
+          border: `1px solid ${activeTab === tab.key ? 'transparent' : '#E8F1FF'}`,
+        }}
+      >
+        {tab.label}
+        <span className="px-1.5 py-0.5 rounded-md" style={{ background: activeTab === tab.key ? 'rgba(255,255,255,0.18)' : '#F4F7FF', fontSize: '0.7rem', fontWeight: 700 }}>
+          {tab.count}
+        </span>
+      </button>
+    ))}
+  </div>
+
+  {/* Add Doctor — RIGHT */}
+  <motion.button
+    whileHover={{ scale: 1.05, boxShadow: '0 8px 24px rgba(27, 79, 216, 0.3)' }}
+    whileTap={{ scale: 0.97 }}
+    onClick={() => setModal({ type: 'add' })}
+    className="flex items-center gap-2 px-8 py-2.5 rounded-xl text-white flex-shrink-0"
+    style={{ background: 'linear-gradient(135deg, #1B4FD8, #3A86FF)', fontFamily: 'var(--font-body)', fontSize: '0.875rem', fontWeight: 600 }}
+  >
+    <Plus className="w-4 h-4" /> Add Doctor
+  </motion.button>
+</div>
+</div>
       {/* Stats */}
+      {activeTab === 'active' && (
       <div className="grid grid-cols-2 gap-4">
         {(['active', 'on_leave'] as DoctorStatus[]).map(s => {
           const sc = statusConfig[s];
@@ -343,6 +403,7 @@ export function DoctorsPage() {
           );
         })}
       </div>
+      )}
 
       {/* Search & Filter */}
       <div className="flex flex-col sm:flex-row gap-3">
@@ -351,6 +412,7 @@ export function DoctorsPage() {
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or specialization..." className="bg-transparent outline-none flex-1"
             style={{ fontFamily: 'var(--font-body)', fontSize: '0.875rem', color: '#0A2463' }} />
         </div>
+        {activeTab === 'active' && (
         <div className="flex gap-2">
           {(['all', 'active', 'on_leave'] as const).map(s => (
             <button key={s} onClick={() => setFilterStatus(s)} className="px-4 py-2.5 rounded-xl capitalize"
@@ -363,6 +425,7 @@ export function DoctorsPage() {
             </button>
           ))}
         </div>
+        )}
       </div>
 
       {/* Loading */}
@@ -377,7 +440,7 @@ export function DoctorsPage() {
         /* Cards Grid */
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 gap-6">
           <AnimatePresence>
-            {filtered.map((doc, i) => {
+            {(activeTab === 'active' ? filtered : filteredDeleted).map((doc, i) => {
               const sc = statusConfig[doc.status];
               const Icon = sc.icon;
               const doctorSchedule = getDoctorSchedule(doc);
@@ -485,6 +548,8 @@ export function DoctorsPage() {
                     )}
 
                     <div className="mt-4 flex flex-wrap gap-2">
+                      {activeTab === 'active' ? (
+                      <>
                       <button
                         onClick={() => void handleStatusChange(doc, doc.status === 'on_leave' ? 'active' : 'on_leave')}
                         className="flex-1 min-w-[140px] rounded-xl px-4 py-2.5"
@@ -512,6 +577,38 @@ export function DoctorsPage() {
                         <Trash2 className="w-4 h-4" />
                         Remove
                       </button>
+                      </>
+                      ) : (
+                      <>
+                      <button
+                        onClick={() => setDoctorToRecover(doc)}
+                        className="flex-1 min-w-[140px] rounded-xl px-4 py-2.5"
+                        style={{
+                          background: '#D1FAE5',
+                          color: '#059669',
+                          fontFamily: 'var(--font-body)',
+                          fontSize: '0.82rem',
+                          fontWeight: 700,
+                        }}
+                      >      
+                        <span className="inline-flex items-center gap-2"><RotateCcw className="w-4 h-4" /> Recover</span>
+                      </button>
+                      <button
+                        onClick={() => setDoctorToDeletePermanently(doc)}
+                        className="flex items-center justify-center gap-2 rounded-xl px-4 py-2.5"
+                        style={{
+                          background: '#FEE2E2',
+                          color: '#DC2626',
+                          fontFamily: 'var(--font-body)',
+                          fontSize: '0.82rem',
+                          fontWeight: 700,
+                        }}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Permanently Delete
+                      </button>
+                      </>
+                      )}
                     </div>
                   </div>
                 </motion.div>
@@ -536,11 +633,28 @@ export function DoctorsPage() {
       <ConfirmModal
         open={!!doctorToRemove}
         title={`Remove ${doctorToRemove?.name || 'doctor'}?`}
-        description="Are you sure do you want to remove this item?"
-        confirmLabel="Remove"
+        description="This doctor will be hidden from the main list and moved to Recently Deleted."
+        confirmLabel="Move to Recently Deleted"
         variant="danger"
         onConfirm={handleRemoveDoctor}
         onCancel={() => setDoctorToRemove(null)}
+      />
+      <ConfirmModal
+        open={!!doctorToRecover}
+        title={`Recover ${doctorToRecover?.name || 'doctor'}?`}
+        description="This doctor will return to the main doctors list."
+        confirmLabel="Recover"
+        onConfirm={handleRecoverDoctor}
+        onCancel={() => setDoctorToRecover(null)}
+      />
+      <ConfirmModal
+        open={!!doctorToDeletePermanently}
+        title={`Permanently delete ${doctorToDeletePermanently?.name || 'doctor'}?`}
+        description="This will permanently delete the doctor record from the database."
+        confirmLabel="Permanently Delete"
+        variant="danger"
+        onConfirm={handlePermanentDeleteDoctor}
+        onCancel={() => setDoctorToDeletePermanently(null)}
       />
     </div>
   );

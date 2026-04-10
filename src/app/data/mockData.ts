@@ -117,6 +117,7 @@ export async function fetchAppointments(): Promise<Appointment[]> {
   const { data, error } = await supabase
     .from('appointments')
     .select('*')
+    .is('deleted_at', null)
     .order('created_at', { ascending: false });
   if (error || !data) return [];
   return data.map((a: any) => ({
@@ -144,6 +145,7 @@ export async function fetchDoctors(): Promise<Doctor[]> {
   const { data, error } = await supabase
     .from('doctors')
     .select('*')
+    .is('deleted_at', null)
     .order('created_at', { ascending: true });
   if (error || !data) return [];
   return data.map((d: any) => ({
@@ -166,6 +168,7 @@ export async function fetchPatients(): Promise<Patient[]> {
   const { data, error } = await supabase
     .from('patients')
     .select('*')
+    .is('deleted_at', null)
     .order('created_at', { ascending: false });
   if (error || !data) return [];
 

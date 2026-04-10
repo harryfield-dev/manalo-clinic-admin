@@ -21,6 +21,7 @@ import {
   ImageOff,
   Trash2,
   CheckCircle,
+  RotateCcw,
 } from "lucide-react";
 import { supabase } from '../lib/supabase';
 import { toast } from 'sonner';
@@ -1176,6 +1177,7 @@ function MarkCompleteModal({
 export function AppointmentsPage() {
   const {
     data: appointmentsData,
+    deletedData: deletedAppointmentsData,
     loading,
     error,
     approveAppointment,
@@ -1183,6 +1185,8 @@ export function AppointmentsPage() {
     createWalkin,
     creatingWalkin,
     deleteAppointment,
+    recoverAppointment,
+    permanentlyDeleteAppointment,
     refetch,
   } = useAppointments();
   const { data: doctorsData } = useDoctors();
@@ -1196,10 +1200,14 @@ export function AppointmentsPage() {
     apt: Appointment;
   } | null>(null);
   const [appointmentToRemove, setAppointmentToRemove] = useState<Appointment | null>(null);
+  const [appointmentToRecover, setAppointmentToRecover] = useState<Appointment | null>(null);
+  const [appointmentToDeletePermanently, setAppointmentToDeletePermanently] = useState<Appointment | null>(null);
+  const [activeTab, setActiveTab] = useState<"active" | "deleted">("active");
   const [showWalkIn, setShowWalkIn] = useState(false);
   const [markCompleteApt, setMarkCompleteApt] = useState<Appointment | null>(null);
   const [isMarkingComplete, setIsMarkingComplete] = useState(false);
   const data = appointmentsData || [];
+  const deletedAppointments = deletedAppointmentsData || [];
   const doctors = doctorsData || [];
 
 
@@ -1220,6 +1228,7 @@ export function AppointmentsPage() {
           .from('patients')
           .select('id')
           .eq('email', markCompleteApt.patientEmail)
+          .is('deleted_at', null)
           .single();
         if (patient) {
           const aptDate = new Date(`${markCompleteApt.date}T00:00:00`).toLocaleDateString('en-PH', {
@@ -1268,6 +1277,17 @@ export function AppointmentsPage() {
     });
   }, [data, search, filterStatus, filterDoctor, filterDate]);
 
+  const filteredDeleted = useMemo(() => {
+    return deletedAppointments.filter((a) => {
+      const matchSearch =
+        a.patientName.toLowerCase().includes(search.toLowerCase()) ||
+        a.doctorName.toLowerCase().includes(search.toLowerCase());
+      const matchDoctor = filterDoctor === "all" || a.doctorName === filterDoctor;
+      const matchDate = !filterDate || a.date === filterDate;
+      return matchSearch && matchDoctor && matchDate;
+    });
+  }, [deletedAppointments, search, filterDoctor, filterDate]);
+
   const handleAction = (type: "approve" | "reject" | "view", apt: Appointment) =>
     setModal({ type, apt });
 
@@ -1295,6 +1315,30 @@ export function AppointmentsPage() {
     }
 
     setAppointmentToRemove(null);
+  };
+
+  const handleRecoverAppointment = async () => {
+    if (!appointmentToRecover) return;
+
+    try {
+      await recoverAppointment(appointmentToRecover);
+    } catch (err) {
+      // Error handled in hook
+    }
+
+    setAppointmentToRecover(null);
+  };
+
+  const handlePermanentDeleteAppointment = async () => {
+    if (!appointmentToDeletePermanently) return;
+
+    try {
+      await permanentlyDeleteAppointment(appointmentToDeletePermanently);
+    } catch (err) {
+      // Error handled in hook
+    }
+
+    setAppointmentToDeletePermanently(null);
   };
 
   const statusCounts = Object.keys(statusConfig).reduce(
@@ -1326,53 +1370,80 @@ export function AppointmentsPage() {
       {/* Status Filter Chips */}
       <div className="flex flex-wrap gap-2">
         {[
-          { key: "all", label: "All", count: data.filter((a) => a.status !== "completed").length },
-          ...Object.entries(statusConfig).map(([k, v]) => ({ key: k, label: v.label, count: statusCounts[k] || 0 })),
+          { key: "active", label: "Appointments", count: data.length },
+          { key: "deleted", label: "Recently Deleted", count: deletedAppointments.length },
         ].map((item) => (
           <motion.button
             key={item.key}
-            onClick={() => setFilterStatus(item.key)}
+            onClick={() => setActiveTab(item.key as "active" | "deleted")}
             whileHover={{ y: -1 }}
             whileTap={{ scale: 0.97 }}
             className="flex items-center gap-2 px-4 py-2 rounded-xl transition-all"
             style={{
               fontFamily: "var(--font-body)",
               fontSize: "0.8rem",
-              fontWeight: filterStatus === item.key ? 700 : 500,
-              background:
-                filterStatus === item.key
-                  ? item.key === "all"
-                    ? "#0A2463"
-                    : statusConfig[item.key as keyof typeof statusConfig]?.bg || "#E8F1FF"
-                  : "#fff",
-              color:
-                filterStatus === item.key
-                  ? item.key === "all"
-                    ? "#fff"
-                    : statusConfig[item.key as keyof typeof statusConfig]?.text || "#0A2463"
-                  : "#6B7A99",
-              border: `1px solid ${filterStatus === item.key ? "transparent" : "#E8F1FF"}`,
+              fontWeight: activeTab === item.key ? 700 : 500,
+              background: activeTab === item.key ? "#0A2463" : "#fff",
+              color: activeTab === item.key ? "#fff" : "#6B7A99",
+              border: `1px solid ${activeTab === item.key ? "transparent" : "#E8F1FF"}`,
             }}
           >
             {item.label}
-            <span
-              className="px-1.5 py-0.5 rounded-md"
-              style={{
-                background: filterStatus === item.key ? "rgba(255,255,255,0.2)" : "#F4F7FF",
-                fontSize: "0.7rem",
-                fontWeight: 700,
-              }}
-            >
+            <span className="px-1.5 py-0.5 rounded-md" style={{ background: activeTab === item.key ? "rgba(255,255,255,0.2)" : "#F4F7FF", fontSize: "0.7rem", fontWeight: 700 }}>
               {item.count}
             </span>
           </motion.button>
         ))}
+        {activeTab === "active" &&
+          [
+            { key: "all", label: "All", count: data.filter((a) => a.status !== "completed").length },
+            ...Object.entries(statusConfig).map(([k, v]) => ({ key: k, label: v.label, count: statusCounts[k] || 0 })),
+          ].map((item) => (
+            <motion.button
+              key={item.key}
+              onClick={() => setFilterStatus(item.key)}
+              whileHover={{ y: -1 }}
+              whileTap={{ scale: 0.97 }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl transition-all"
+              style={{
+                fontFamily: "var(--font-body)",
+                fontSize: "0.8rem",
+                fontWeight: filterStatus === item.key ? 700 : 500,
+                background:
+                  filterStatus === item.key
+                    ? item.key === "all"
+                      ? "#0A2463"
+                      : statusConfig[item.key as keyof typeof statusConfig]?.bg || "#E8F1FF"
+                    : "#fff",
+                color:
+                  filterStatus === item.key
+                    ? item.key === "all"
+                      ? "#fff"
+                      : statusConfig[item.key as keyof typeof statusConfig]?.text || "#0A2463"
+                    : "#6B7A99",
+                border: `1px solid ${filterStatus === item.key ? "transparent" : "#E8F1FF"}`,
+              }}
+            >
+              {item.label}
+              <span
+                className="px-1.5 py-0.5 rounded-md"
+                style={{
+                  background: filterStatus === item.key ? "rgba(255,255,255,0.2)" : "#F4F7FF",
+                  fontSize: "0.7rem",
+                  fontWeight: 700,
+                }}
+              >
+                {item.count}
+              </span>
+            </motion.button>
+          ))}
         <motion.button
           whileHover={{ scale: 1.05, boxShadow: "0 8px 24px rgba(27, 79, 216, 0.3)" }}
           whileTap={{ scale: 0.97 }}
           onClick={() => setShowWalkIn(true)}
+          disabled={activeTab === "deleted"}
           className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-white ml-auto"
-          style={{ background: "linear-gradient(135deg, #1B4FD8, #3A86FF)", fontFamily: "var(--font-body)", fontSize: "0.875rem", fontWeight: 600 }}
+          style={{ background: activeTab === "deleted" ? "#C7D7F8" : "linear-gradient(135deg, #1B4FD8, #3A86FF)", fontFamily: "var(--font-body)", fontSize: "0.875rem", fontWeight: 600 }}
         >
           <Plus className="w-4 h-4" /> Walk-In Appointment
         </motion.button>
@@ -1487,7 +1558,7 @@ export function AppointmentsPage() {
               {error}. Please refresh.
             </p>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : (activeTab === "active" ? filtered : filteredDeleted).length === 0 ? (
           <div
             className="rounded-2xl p-12 text-center"
             style={{ background: "#fff", border: "1px solid #E8F1FF" }}
@@ -1501,7 +1572,7 @@ export function AppointmentsPage() {
             </p>
           </div>
         ) : (
-          filtered.map((apt, i) => {
+          (activeTab === "active" ? filtered : filteredDeleted).map((apt, i) => {
             const sc = statusConfig[apt.status as keyof typeof statusConfig];
             const tc = typeConfig[apt.type] ?? { bg: "#F4F7FF", text: "#6B7A99", label: apt.type };
             const hasId = !!(apt.validIdUrl && apt.validIdUrl.trim());
@@ -1596,7 +1667,7 @@ export function AppointmentsPage() {
                     </div>
                   )}
 
-                  {apt.status === "pending" && (
+                  {activeTab === "active" && apt.status === "pending" && (
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <motion.button
                         whileHover={{ scale: 1.05 }}
@@ -1637,7 +1708,7 @@ export function AppointmentsPage() {
                       </motion.button>
                     </div>
                   )}
-                  {apt.status === "approved" && (
+                  {activeTab === "active" && apt.status === "approved" && (
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <motion.button
                         whileHover={{ scale: 1.05 }}
@@ -1670,7 +1741,7 @@ export function AppointmentsPage() {
                       </motion.button>
                     </div>
                   )}
-                  {(apt.status === "rejected" || apt.status === "completed") && (
+                  {activeTab === "active" && (apt.status === "rejected" || apt.status === "completed") && (
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <motion.button
                         whileHover={{ scale: 1.05 }}
@@ -1690,6 +1761,28 @@ export function AppointmentsPage() {
                         title="Remove appointment"
                       >
                         <Trash2 className="w-4 h-4" style={{ color: "#DC2626" }} />
+                      </motion.button>
+                    </div>
+                  )}
+                  {activeTab === "deleted" && (
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.97 }}
+                        onClick={() => setAppointmentToRecover(apt)}
+                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl"
+                        style={{ background: "#D1FAE5", color: "#059669", fontFamily: "var(--font-body)", fontSize: "0.8rem", fontWeight: 600 }}
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" /> Recover
+                      </motion.button>
+                      <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.97 }}
+                        onClick={() => setAppointmentToDeletePermanently(apt)}
+                        className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl"
+                        style={{ background: "#FEE2E2", color: "#DC2626", fontFamily: "var(--font-body)", fontSize: "0.8rem", fontWeight: 600 }}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Permanently Delete
                       </motion.button>
                     </div>
                   )}
@@ -1756,11 +1849,28 @@ export function AppointmentsPage() {
       <ConfirmModal
         open={!!appointmentToRemove}
         title={`Remove ${appointmentToRemove?.patientName || "appointment"}?`}
-        description="Are you sure do you want to remove this item?."
-        confirmLabel="Remove"
+        description="This appointment will be hidden from the main list and moved to Recently Deleted."
+        confirmLabel="Move to Recently Deleted"
         variant="danger"
         onConfirm={handleRemoveAppointment}
         onCancel={() => setAppointmentToRemove(null)}
+      />
+      <ConfirmModal
+        open={!!appointmentToRecover}
+        title={`Recover ${appointmentToRecover?.patientName || "appointment"}?`}
+        description="This appointment will return to the main appointments list."
+        confirmLabel="Recover"
+        onConfirm={handleRecoverAppointment}
+        onCancel={() => setAppointmentToRecover(null)}
+      />
+      <ConfirmModal
+        open={!!appointmentToDeletePermanently}
+        title={`Permanently delete ${appointmentToDeletePermanently?.patientName || "appointment"}?`}
+        description="This will permanently delete the appointment from the database."
+        confirmLabel="Permanently Delete"
+        variant="danger"
+        onConfirm={handlePermanentDeleteAppointment}
+        onCancel={() => setAppointmentToDeletePermanently(null)}
       />
     </div>
   );

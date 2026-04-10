@@ -165,7 +165,7 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: string) => vo
       setPatientsLoading(true);
 
       const [patientCountRes, chatRows] = await Promise.all([
-        supabase.from('patients').select('id', { count: 'exact', head: true }),
+        supabase.from('patients').select('id', { count: 'exact', head: true }).is('deleted_at', null),
         fetchChatConversations(),
       ]);
 
@@ -188,7 +188,7 @@ export function DashboardPage({ onNavigate }: { onNavigate: (page: string) => vo
         setInboxConvs(await fetchChatConversations());
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'patients' }, async () => {
-        const { count, error } = await supabase.from('patients').select('id', { count: 'exact', head: true });
+        const { count, error } = await supabase.from('patients').select('id', { count: 'exact', head: true }).is('deleted_at', null);
         if (!error) {
           setPatientCount(count ?? 0);
         }

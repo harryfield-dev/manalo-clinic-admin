@@ -62,6 +62,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       supabase
         .from('appointments')
         .select('id, status')
+        .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(200),
     ]);

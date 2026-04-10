@@ -165,6 +165,7 @@ export function NotificationsPage({ onNavigate }: { onNavigate?: (page: string) 
         supabase
           .from('appointments')
           .select('id, patient_name, type, date, doctor_name, status, reason, created_at')
+          .is('deleted_at', null)
           .order('created_at', { ascending: false })
           .limit(100),
         supabase

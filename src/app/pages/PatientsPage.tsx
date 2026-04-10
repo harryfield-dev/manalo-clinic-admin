@@ -571,7 +571,8 @@ export function PatientsPage() {
             email: patient.email,
             registrationSource: patient._fromWalkinTable ? 'walk-in' : patient.registration_source,
           }),
-          recordOrigin: patient._fromAppointment ? 'appointments' : patient._fromWalkinTable ? 'patient_walkin' : 'patients',
+          // AFTER
+recordOrigin: (patient._fromAppointment ? 'appointments' : patient._fromWalkinTable ? 'patient_walkin' : 'patients') as 'patients' | 'appointments' | 'patient_walkin',
         };
       }));
     };
@@ -834,8 +835,8 @@ export function PatientsPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3.5">
-                        <div style={{ fontFamily: 'var(--font-body)', color: '#0A2463', fontSize: '0.8rem' }}>{patient.phone || '—'}</div>
-                        <div style={{ fontFamily: 'var(--font-body)', color: '#6B7A99', fontSize: '0.75rem' }}>{patient.email || '—'}</div>
+                        <div style={{ fontFamily: 'var(--font-body)', color: '#0A2463', fontSize: '0.8rem' }}>{patient.phone || 'ï¿½'}</div>
+                        <div style={{ fontFamily: 'var(--font-body)', color: '#6B7A99', fontSize: '0.75rem' }}>{patient.email || 'ï¿½'}</div>
                       </td>
                       <td className="px-4 py-3.5">
                         {activeTab === 'active' ? (
@@ -848,7 +849,7 @@ export function PatientsPage() {
                                 Registered
                               </div>
                             </>
-                          ) : <span style={{ fontFamily: 'var(--font-body)', color: '#6B7A99', fontSize: '0.8rem' }}>—</span>
+                          ) : <span style={{ fontFamily: 'var(--font-body)', color: '#6B7A99', fontSize: '0.8rem' }}>ï¿½</span>
                         ) : (
                           patient.deletedAt ? (
                             <>
@@ -859,7 +860,7 @@ export function PatientsPage() {
                                 Recently Deleted
                               </div>
                             </>
-                          ) : <span style={{ fontFamily: 'var(--font-body)', color: '#6B7A99', fontSize: '0.8rem' }}>—</span>
+                          ) : <span style={{ fontFamily: 'var(--font-body)', color: '#6B7A99', fontSize: '0.8rem' }}>ï¿½</span>
                         )}
                       </td>
                       <td className="px-4 py-3.5">

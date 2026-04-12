@@ -415,109 +415,108 @@ export function PatientsPage() {
   const [recoverTarget, setRecoverTarget] = useState<PatientWithConsultDate | null>(null);
   const [permanentDeleteTarget, setPermanentDeleteTarget] = useState<PatientWithConsultDate | null>(null);
 
-  useEffect(() => {
-    const mapRowsToPatients = async ({
-      patientRows,
-      walkinRows,
-      appointmentRows,
-      includeAppointmentOnly,
-    }: {
-      patientRows: any[];
-      walkinRows: any[];
-      appointmentRows: any[];
-      includeAppointmentOnly: boolean;
-    }) => {
-      const { data: allRatings } = await supabase.from('appointment_ratings').select('patient_email, rating');
-      const ratingMap = new Map<string, { count: number; sum: number }>();
+  const mapRowsToPatients = async ({
+    patientRows,
+    walkinRows,
+    appointmentRows,
+    includeAppointmentOnly,
+  }: {
+    patientRows: any[];
+    walkinRows: any[];
+    appointmentRows: any[];
+    includeAppointmentOnly: boolean;
+  }) => {
+    const { data: allRatings } = await supabase.from('appointment_ratings').select('patient_email, rating');
+    const ratingMap = new Map<string, { count: number; sum: number }>();
 
-      for (const rating of allRatings || []) {
-        const email = (rating.patient_email || '').toLowerCase();
-        if (!email) continue;
-        if (!ratingMap.has(email)) ratingMap.set(email, { count: 0, sum: 0 });
-        const entry = ratingMap.get(email)!;
-        entry.count += 1;
-        entry.sum += rating.rating;
+    for (const rating of allRatings || []) {
+      const email = (rating.patient_email || '').toLowerCase();
+      if (!email) continue;
+      if (!ratingMap.has(email)) ratingMap.set(email, { count: 0, sum: 0 });
+      const entry = ratingMap.get(email)!;
+      entry.count += 1;
+      entry.sum += rating.rating;
+    }
+
+    const apptMap = new Map<string, any>();
+    for (const appointment of appointmentRows || []) {
+      const key = getPatientIdentityKey({
+        email: appointment.patient_email,
+        phone: appointment.patient_phone,
+        name: appointment.patient_name,
+        fallbackId: appointment.id,
+      });
+
+      if (!apptMap.has(key)) {
+        apptMap.set(key, appointment);
       }
+    }
 
-      const apptMap = new Map<string, any>();
-      for (const appointment of appointmentRows || []) {
-        const key = getPatientIdentityKey({
-          email: appointment.patient_email,
-          phone: appointment.patient_phone,
-          name: appointment.patient_name,
-          fallbackId: appointment.id,
-        });
+    const patientKeys = new Set(
+      patientRows.map((patient: any) =>
+        getPatientIdentityKey({
+          email: patient.email,
+          phone: patient.contact_number,
+          name: patient.full_name,
+          fallbackId: patient.id,
+        }),
+      ),
+    );
 
-        if (!apptMap.has(key)) {
-          apptMap.set(key, appointment);
-        }
-      }
+    const walkinKeys = new Set(
+      walkinRows.map((patient: any) =>
+        getPatientIdentityKey({
+          email: patient.email,
+          phone: patient.contact_number,
+          name: patient.full_name,
+          fallbackId: patient.id,
+        }),
+      ),
+    );
 
-      const patientKeys = new Set(
-        patientRows.map((patient: any) =>
-          getPatientIdentityKey({
+    const mergedRows = [
+      ...patientRows,
+      ...walkinRows
+        .filter((patient: any) => {
+          const key = getPatientIdentityKey({
             email: patient.email,
             phone: patient.contact_number,
             name: patient.full_name,
             fallbackId: patient.id,
-          }),
-        ),
-      );
+          });
 
-      const walkinKeys = new Set(
-        walkinRows.map((patient: any) =>
-          getPatientIdentityKey({
-            email: patient.email,
-            phone: patient.contact_number,
-            name: patient.full_name,
-            fallbackId: patient.id,
-          }),
-        ),
-      );
+          return !patientKeys.has(key);
+        })
+        .map((patient: any) => ({ ...patient, _fromWalkinTable: true, registration_source: 'walk-in' })),
+    ];
 
-      const mergedRows = [
-        ...patientRows,
-        ...walkinRows
-          .filter((patient: any) => {
-            const key = getPatientIdentityKey({
-              email: patient.email,
-              phone: patient.contact_number,
-              name: patient.full_name,
-              fallbackId: patient.id,
-            });
-
-            return !patientKeys.has(key);
-          })
-          .map((patient: any) => ({ ...patient, _fromWalkinTable: true, registration_source: 'walk-in' })),
-      ];
-
-      if (includeAppointmentOnly) {
-        for (const [key, appointment] of apptMap.entries()) {
-          if (!patientKeys.has(key) && !walkinKeys.has(key)) {
-            mergedRows.push({
-              id: appointment.id,
-              full_name: appointment.patient_name || 'Walk-in Patient',
-              email: appointment.patient_email || '',
-              contact_number: appointment.patient_phone || '',
-              date_of_birth: '',
-              gender: 'other',
-              address: '',
-              emergency_contact_name: '',
-              emergency_contact_number: '',
-              valid_id_url: appointment.valid_id_url || '',
-              created_at: appointment.created_at,
-              identity_key: key,
-              _fromAppointment: true,
-              _apptDate: appointment.date,
-              registration_source: 'walk-in',
-              deleted_at: null,
-            });
-          }
+    if (includeAppointmentOnly) {
+      for (const [key, appointment] of apptMap.entries()) {
+        if (!patientKeys.has(key) && !walkinKeys.has(key)) {
+          mergedRows.push({
+            id: appointment.id,
+            full_name: appointment.patient_name || 'Walk-in Patient',
+            email: appointment.patient_email || '',
+            contact_number: appointment.patient_phone || '',
+            date_of_birth: '',
+            gender: 'other',
+            address: '',
+            emergency_contact_name: '',
+            emergency_contact_number: '',
+            valid_id_url: appointment.valid_id_url || '',
+            created_at: appointment.created_at,
+            identity_key: key,
+            _fromAppointment: true,
+            _apptDate: appointment.date,
+            registration_source: 'walk-in',
+            deleted_at: null,
+          });
         }
       }
+    }
 
-      return Promise.all(mergedRows.map(async (patient: any) => {
-        let consultations: Consultation[] = [];
+    return Promise.all(mergedRows.map(async (patient: any) => {
+      let consultations: Consultation[] = [];
 
         if (patient.email) {
           const { data: consultData } = await supabase
@@ -571,53 +570,58 @@ export function PatientsPage() {
             email: patient.email,
             registrationSource: patient._fromWalkinTable ? 'walk-in' : patient.registration_source,
           }),
-          // AFTER
-recordOrigin: (patient._fromAppointment ? 'appointments' : patient._fromWalkinTable ? 'patient_walkin' : 'patients') as 'patients' | 'appointments' | 'patient_walkin',
+          recordOrigin: (patient._fromAppointment ? 'appointments' : patient._fromWalkinTable ? 'patient_walkin' : 'patients') as 'patients' | 'appointments' | 'patient_walkin',
         };
-      }));
-    };
+    }));
+  };
 
-    const loadPatients = async () => {
-      setLoading(true);
-      try {
-        const [patientsRes, appointmentsRes, walkinsRes, deletedPatientsRes, deletedWalkinsRes] = await Promise.all([
-          supabase.from('patients').select('*').is('deleted_at', null).order('created_at', { ascending: false }),
-          supabase.from('appointments').select('*').is('deleted_at', null).in('status', ['approved', 'completed']).order('created_at', { ascending: false }),
-          supabase.from('patient_walkin').select('*').is('deleted_at', null).order('created_at', { ascending: false }),
-          supabase.from('patients').select('*').not('deleted_at', 'is', null).order('deleted_at', { ascending: false }),
-          supabase.from('patient_walkin').select('*').not('deleted_at', 'is', null).order('deleted_at', { ascending: false }),
-        ]);
+  const loadPatients = async () => {
+    setLoading(true);
+    try {
+      const [patientsRes, appointmentsRes, walkinsRes, deletedPatientsRes, deletedWalkinsRes] = await Promise.all([
+        supabase.from('patients').select('*').is('deleted_at', null).order('created_at', { ascending: false }),
+        supabase.from('appointments').select('*').is('deleted_at', null).in('status', ['approved', 'completed']).order('created_at', { ascending: false }),
+        supabase.from('patient_walkin').select('*').is('deleted_at', null).order('created_at', { ascending: false }),
+        supabase.from('patients').select('*').not('deleted_at', 'is', null).order('deleted_at', { ascending: false }),
+        supabase.from('patient_walkin').select('*').not('deleted_at', 'is', null).order('deleted_at', { ascending: false }),
+      ]);
 
-        if (patientsRes.error) throw patientsRes.error;
-        if (appointmentsRes.error) throw appointmentsRes.error;
-        if (walkinsRes.error) throw walkinsRes.error;
-        if (deletedPatientsRes.error) throw deletedPatientsRes.error;
-        if (deletedWalkinsRes.error) throw deletedWalkinsRes.error;
+      if (patientsRes.error) throw patientsRes.error;
+      if (appointmentsRes.error) throw appointmentsRes.error;
+      if (walkinsRes.error) throw walkinsRes.error;
+      if (deletedPatientsRes.error) throw deletedPatientsRes.error;
+      if (deletedWalkinsRes.error) throw deletedWalkinsRes.error;
 
-        const [activeRows, deletedRows] = await Promise.all([
-          mapRowsToPatients({
-            patientRows: patientsRes.data || [],
-            walkinRows: walkinsRes.data || [],
-            appointmentRows: appointmentsRes.data || [],
-            includeAppointmentOnly: true,
-          }),
-          mapRowsToPatients({
-            patientRows: deletedPatientsRes.data || [],
-            walkinRows: deletedWalkinsRes.data || [],
-            appointmentRows: [],
-            includeAppointmentOnly: false,
-          }),
-        ]);
+      const [activeRows, deletedRows] = await Promise.all([
+        mapRowsToPatients({
+          patientRows: patientsRes.data || [],
+          walkinRows: walkinsRes.data || [],
+          appointmentRows: appointmentsRes.data || [],
+          includeAppointmentOnly: true,
+        }),
+        mapRowsToPatients({
+          patientRows: deletedPatientsRes.data || [],
+          walkinRows: deletedWalkinsRes.data || [],
+          appointmentRows: [],
+          includeAppointmentOnly: false,
+        }),
+      ]);
 
-        setPatients(activeRows);
-        setDeletedPatients(deletedRows);
-      } catch (error: any) {
-        toast.error(error?.message || 'Failed to load patients.');
-      } finally {
-        setLoading(false);
-      }
-    };
+      setPatients(activeRows);
+      setDeletedPatients(deletedRows);
+      setSelectedPatient((current) => {
+        if (!current) return null;
 
+        return [...activeRows, ...deletedRows].find((patient) => patient.id === current.id) || null;
+      });
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to load patients.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     void loadPatients();
 
     const channel = supabase
@@ -635,6 +639,28 @@ recordOrigin: (patient._fromAppointment ? 'appointments' : patient._fromWalkinTa
 
     return () => { supabase.removeChannel(channel); };
   }, []);
+
+  const movePatientToDeleted = (patient: PatientWithConsultDate, deletedAt: string) => {
+    const nextPatient = { ...patient, deletedAt };
+
+    setPatients((current) => current.filter((entry) => entry.id !== patient.id));
+    setDeletedPatients((current) => [nextPatient, ...current.filter((entry) => entry.id !== patient.id)]);
+    setSelectedPatient((current) => (current?.id === patient.id ? nextPatient : current));
+  };
+
+  const recoverPatientLocally = (patient: PatientWithConsultDate) => {
+    const nextPatient = { ...patient, deletedAt: null };
+
+    setDeletedPatients((current) => current.filter((entry) => entry.id !== patient.id));
+    setPatients((current) => [nextPatient, ...current.filter((entry) => entry.id !== patient.id)]);
+    setSelectedPatient((current) => (current?.id === patient.id ? nextPatient : current));
+  };
+
+  const removePatientLocally = (patient: PatientWithConsultDate) => {
+    setPatients((current) => current.filter((entry) => entry.id !== patient.id));
+    setDeletedPatients((current) => current.filter((entry) => entry.id !== patient.id));
+    setSelectedPatient((current) => (current?.id === patient.id ? null : current));
+  };
 
   const filtered = patients.filter((patient) => {
     const registrationSource = patient.registrationSource || inferRegistrationSource({ email: patient.email });
@@ -670,7 +696,10 @@ recordOrigin: (patient._fromAppointment ? 'appointments' : patient._fromWalkinTa
     if (!deleteTarget) return;
 
     try {
-      await updatePatientDeletionState(deleteTarget, new Date().toISOString());
+      const deletedAt = new Date().toISOString();
+      await updatePatientDeletionState(deleteTarget, deletedAt);
+      movePatientToDeleted(deleteTarget, deletedAt);
+      await loadPatients();
       toast.success(`${deleteTarget.name} was moved to Recently Deleted.`);
       setDeleteTarget(null);
     } catch (error: any) {
@@ -683,6 +712,8 @@ recordOrigin: (patient._fromAppointment ? 'appointments' : patient._fromWalkinTa
 
     try {
       await updatePatientDeletionState(recoverTarget, null);
+      recoverPatientLocally(recoverTarget);
+      await loadPatients();
       toast.success(`${recoverTarget.name} was recovered.`);
       setRecoverTarget(null);
     } catch (error: any) {
@@ -697,6 +728,8 @@ recordOrigin: (patient._fromAppointment ? 'appointments' : patient._fromWalkinTa
       const table = permanentDeleteTarget.recordOrigin === 'patient_walkin' ? 'patient_walkin' : 'patients';
       const { error } = await supabase.from(table).delete().eq('id', permanentDeleteTarget.id);
       if (error) throw error;
+      removePatientLocally(permanentDeleteTarget);
+      await loadPatients();
       toast.success(`${permanentDeleteTarget.name} was permanently deleted.`);
       setPermanentDeleteTarget(null);
     } catch (error: any) {
@@ -915,8 +948,8 @@ recordOrigin: (patient._fromAppointment ? 'appointments' : patient._fromWalkinTa
       <ConfirmModal
         open={!!deleteTarget}
         title={`Remove ${deleteTarget?.name || 'patient record'}?`}
-        description="This patient will be hidden from the main list and moved to Recently Deleted."
-        confirmLabel="Move to Recently Deleted"
+        description="Are you sure do you want to remove this item?"
+        confirmLabel="Remove"
         variant="danger"
         onConfirm={handleRemovePatient}
         onCancel={() => setDeleteTarget(null)}
@@ -932,7 +965,7 @@ recordOrigin: (patient._fromAppointment ? 'appointments' : patient._fromWalkinTa
       <ConfirmModal
         open={!!permanentDeleteTarget}
         title={`Permanently delete ${permanentDeleteTarget?.name || 'patient record'}?`}
-        description="This will permanently delete the patient record from the database."
+        description="This will permanently delete the patient record."
         confirmLabel="Permanently Delete"
         variant="danger"
         onConfirm={handlePermanentDeletePatient}

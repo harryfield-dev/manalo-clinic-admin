@@ -598,7 +598,7 @@ export function DoctorsPage() {
                         className="flex items-center justify-center gap-2 rounded-xl px-4 py-2.5"
                         style={{
                           background: '#FEE2E2',
-                          color: '#DC2626',
+                          color: '#e42f2fff',
                           fontFamily: 'var(--font-body)',
                           fontSize: '0.82rem',
                           fontWeight: 700,
@@ -633,8 +633,8 @@ export function DoctorsPage() {
       <ConfirmModal
         open={!!doctorToRemove}
         title={`Remove ${doctorToRemove?.name || 'doctor'}?`}
-        description="This doctor will be hidden from the main list and moved to Recently Deleted."
-        confirmLabel="Move to Recently Deleted"
+        description="Are you sure do you want to remove this item?"
+        confirmLabel="Remove"
         variant="danger"
         onConfirm={handleRemoveDoctor}
         onCancel={() => setDoctorToRemove(null)}
@@ -650,7 +650,7 @@ export function DoctorsPage() {
       <ConfirmModal
         open={!!doctorToDeletePermanently}
         title={`Permanently delete ${doctorToDeletePermanently?.name || 'doctor'}?`}
-        description="This will permanently delete the doctor record from the database."
+        description="This will permanently delete the doctor record."
         confirmLabel="Permanently Delete"
         variant="danger"
         onConfirm={handlePermanentDeleteDoctor}

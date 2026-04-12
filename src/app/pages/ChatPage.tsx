@@ -29,6 +29,31 @@ interface ConversationSummary extends ChatConversationSummary {
   escalated: boolean;
 }
 
+interface DeletedConversationSummary extends ConversationSummary {
+  deletedAt: string;
+}
+
+const DELETED_CHAT_STORAGE_KEY = 'admin-chat-deleted-conversations';
+
+function getDeletedConversationMap() {
+  if (typeof window === 'undefined') return new Map<string, DeletedConversationSummary>();
+
+  try {
+    const raw = window.localStorage.getItem(DELETED_CHAT_STORAGE_KEY);
+    if (!raw) return new Map<string, DeletedConversationSummary>();
+
+    const parsed = JSON.parse(raw) as DeletedConversationSummary[];
+    return new Map(parsed.map((conversation) => [conversation.patientEmail, conversation]));
+  } catch {
+    return new Map<string, DeletedConversationSummary>();
+  }
+}
+
+function saveDeletedConversations(conversations: DeletedConversationSummary[]) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(DELETED_CHAT_STORAGE_KEY, JSON.stringify(conversations));
+}
+
 const PH_TIMEZONE = 'Asia/Manila';
 
 function getParticipantInitials(name?: string, email?: string) {
@@ -167,14 +192,17 @@ export function ChatPage() {
   const adminName = user?.name ?? 'Admin';
 
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [deletedConversations, setDeletedConversations] = useState<DeletedConversationSummary[]>([]);
   const [selected, setSelected] = useState<ConversationSummary | null>(null);
   const [messages, setMessages] = useState<ChatMessageRecord[]>([]);
   const [message, setMessage] = useState('');
   const [search, setSearch] = useState('');
+  const [activeTab, setActiveTab] = useState<'active' | 'deleted'>('active');
   const [loadingConvs, setLoadingConvs] = useState(true);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const [sending, setSending] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false);
+  const [showPermanentDeleteConfirm, setShowPermanentDeleteConfirm] = useState(false);
   const [deletingChat, setDeletingChat] = useState(false);
   const [hasSupabaseSession, setHasSupabaseSession] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -213,7 +241,27 @@ export function ChatPage() {
   const syncConversationList = useCallback(async () => {
     setLoadingConvs(true);
     const summaries = await fetchChatConversations();
-    setConversations(summaries.map((conversation) => ({ ...conversation, escalated: false })));
+    const nextConversations = summaries.map((conversation) => ({ ...conversation, escalated: false }));
+    const deletedMap = getDeletedConversationMap();
+    const nextActive: ConversationSummary[] = [];
+    const nextDeleted: DeletedConversationSummary[] = [];
+
+    for (const conversation of nextConversations) {
+      const deletedConversation = deletedMap.get(conversation.patientEmail);
+      if (deletedConversation) {
+        nextDeleted.push({
+          ...conversation,
+          deletedAt: deletedConversation.deletedAt,
+        });
+      } else {
+        nextActive.push(conversation);
+      }
+    }
+
+    nextDeleted.sort((a, b) => new Date(b.deletedAt).getTime() - new Date(a.deletedAt).getTime());
+    setConversations(nextActive);
+    setDeletedConversations(nextDeleted);
+    saveDeletedConversations(nextDeleted);
     setLoadingConvs(false);
   }, []);
 
@@ -261,7 +309,7 @@ export function ChatPage() {
   useEffect(() => {
     if (!selected) return;
 
-    const updatedConversation = conversations.find(
+    const updatedConversation = [...conversations, ...deletedConversations].find(
       (conversation) => conversation.patientEmail === selected.patientEmail
     );
 
@@ -280,7 +328,7 @@ export function ChatPage() {
     ) {
       setSelected(updatedConversation);
     }
-  }, [conversations, selected]);
+  }, [conversations, deletedConversations, selected]);
 
   useEffect(() => {
     const channel = supabase
@@ -352,6 +400,11 @@ export function ChatPage() {
         throw new Error('No chat rows were deleted. Supabase is still blocking this operation.');
       }
       await syncConversationList();
+      setDeletedConversations((current) => {
+        const next = current.filter((conversation) => conversation.patientEmail !== selected.patientEmail);
+        saveDeletedConversations(next);
+        return next;
+      });
       setSelected(null);
       setMessages([]);
       toast.success('Conversation deleted successfully.');
@@ -362,10 +415,58 @@ export function ChatPage() {
     }
   };
 
-  const filteredConversations = conversations.filter((conversation) =>
+  const handleRemoveConversation = () => {
+    if (!selected) return;
+
+    const deletedConversation: DeletedConversationSummary = {
+      ...selected,
+      deletedAt: new Date().toISOString(),
+    };
+
+    setConversations((current) => current.filter((conversation) => conversation.patientEmail !== selected.patientEmail));
+    setDeletedConversations((current) => {
+      const next = [deletedConversation, ...current.filter((conversation) => conversation.patientEmail !== selected.patientEmail)];
+      saveDeletedConversations(next);
+      return next;
+    });
+    setSelected(null);
+    setMessages([]);
+    setActiveTab('deleted');
+    toast.success('Conversation moved to Recently Deleted.');
+  };
+
+  const handleRecoverConversation = () => {
+    if (!selected) return;
+
+    const recoveredConversation = selected;
+    setDeletedConversations((current) => {
+      const next = current.filter((conversation) => conversation.patientEmail !== recoveredConversation.patientEmail);
+      saveDeletedConversations(next);
+      return next;
+    });
+    setConversations((current) => [recoveredConversation, ...current.filter((conversation) => conversation.patientEmail !== recoveredConversation.patientEmail)]);
+    setActiveTab('active');
+    toast.success('Conversation recovered.');
+  };
+
+  const visibleConversations = activeTab === 'active' ? conversations : deletedConversations;
+  const filteredConversations = visibleConversations.filter((conversation) =>
     conversation.patientEmail.toLowerCase().includes(search.toLowerCase()) ||
     conversation.patientName.toLowerCase().includes(search.toLowerCase())
   );
+
+  useEffect(() => {
+    if (!selected) return;
+
+    const existsInActiveTab = visibleConversations.some(
+      (conversation) => conversation.patientEmail === selected.patientEmail
+    );
+
+    if (!existsInActiveTab) {
+      setSelected(null);
+      setMessages([]);
+    }
+  }, [activeTab, selected, visibleConversations]);
 
   const selectedInitials = selected ? getParticipantInitials(selected.patientName, selected.patientEmail) : '';
   const firstMsgTime = messages[0]?.created_at;
@@ -373,20 +474,36 @@ export function ChatPage() {
   return (
     <div className="h-full min-h-0 p-3 sm:p-4 md:p-6 xl:p-8">
       <ConfirmModal
-        open={showDeleteConfirm}
-        title="Delete Conversation?"
+        open={showRemoveConfirm}
+        title="Remove Conversation?"
         description={
           selected
-            ? `Are you sure you want to delete this conversation with ${selected.patientName}? All messages will be permanently removed.`
-            : 'Are you sure you want to delete this conversation?'
+            ? `Are you sure you want to remove this conversation with ${selected.patientName}?`
+            : 'Are you sure you want to remove this conversation?'
         }
-        confirmLabel={deletingChat ? 'Deleting...' : 'Delete Chat'}
+        confirmLabel="Remove"
         variant="danger"
         onConfirm={() => {
-          setShowDeleteConfirm(false);
+          setShowRemoveConfirm(false);
+          handleRemoveConversation();
+        }}
+        onCancel={() => setShowRemoveConfirm(false)}
+      />
+      <ConfirmModal
+        open={showPermanentDeleteConfirm}
+        title="Permanently Delete Conversation?"
+        description={
+          selected
+            ? `Are you sure you want to permanently delete this conversation with ${selected.patientName}? All messages will be permanently deleted.`
+            : 'Are you sure you want to permanently delete this conversation?'
+        }
+        confirmLabel={deletingChat ? 'Deleting...' : 'Permanently Delete'}
+        variant="danger"
+        onConfirm={() => {
+          setShowPermanentDeleteConfirm(false);
           handleDeleteChat();
         }}
-        onCancel={() => setShowDeleteConfirm(false)}
+        onCancel={() => setShowPermanentDeleteConfirm(false)}
       />
 
       <div className="flex h-full min-h-0 flex-col gap-4 lg:gap-5">
@@ -410,14 +527,43 @@ export function ChatPage() {
             style={{ borderColor: '#DCE8FF', boxShadow: '0 20px 60px rgba(10, 36, 99, 0.08)' }}
           >
             <div className="border-b px-4 py-4 sm:px-5" style={{ borderColor: '#E8F1FF', background: 'linear-gradient(180deg, #FFFFFF 0%, #F8FBFF 100%)' }}>
+              <div className="mb-4 flex flex-wrap gap-2">
+                {[
+                  { key: 'active', label: 'Inbox', count: conversations.length },
+                  { key: 'deleted', label: 'Recently Deleted', count: deletedConversations.length },
+                ].map((tab) => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setActiveTab(tab.key as 'active' | 'deleted')}
+                    className="flex items-center gap-2 rounded-2xl px-4 py-2.5"
+                    style={{
+                      fontFamily: 'var(--font-body)',
+                      fontSize: '0.8rem',
+                      fontWeight: activeTab === tab.key ? 700 : 500,
+                      background: activeTab === tab.key ? '#0A2463' : '#fff',
+                      color: activeTab === tab.key ? '#fff' : '#6B7A99',
+                      border: `1px solid ${activeTab === tab.key ? 'transparent' : '#E8F1FF'}`,
+                    }}
+                  >
+                    {tab.label}
+                    <span className="rounded-md px-1.5 py-0.5" style={{ background: activeTab === tab.key ? 'rgba(255,255,255,0.18)' : '#F4F7FF', fontSize: '0.7rem', fontWeight: 700 }}>
+                      {tab.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h3 style={{ fontFamily: 'var(--font-heading)', color: '#0A2463', fontSize: '1.1rem', fontWeight: 700 }}>Inbox</h3>
+                  <h3 style={{ fontFamily: 'var(--font-heading)', color: '#0A2463', fontSize: '1.1rem', fontWeight: 700 }}>
+                    {activeTab === 'active' ? 'Inbox' : 'Recently Deleted'}
+                  </h3>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="rounded-full px-3 py-1.5" style={{ background: '#EEF4FF', color: '#1B4FD8', fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 700 }}>
-                    {totalUnread} unread
-                  </div>
+                  {activeTab === 'active' && (
+                    <div className="rounded-full px-3 py-1.5" style={{ background: '#EEF4FF', color: '#1B4FD8', fontFamily: 'var(--font-body)', fontSize: '0.76rem', fontWeight: 700 }}>
+                      {totalUnread} unread
+                    </div>
+                  )}
                   <motion.button
                     whileHover={{ scale: 1.03 }}
                     whileTap={{ scale: 0.97 }}
@@ -462,10 +608,12 @@ export function ChatPage() {
                     <Search className="h-6 w-6" style={{ color: '#1B4FD8' }} />
                   </div>
                   <p className="mt-4" style={{ fontFamily: 'var(--font-heading)', color: '#0A2463', fontSize: '1rem', fontWeight: 700 }}>
-                    No conversations found
+                    {activeTab === 'active' ? 'No conversations found' : 'No deleted conversations found'}
                   </p>
                   <p className="mt-2" style={{ fontFamily: 'var(--font-body)', color: '#6B7A99', fontSize: '0.84rem', lineHeight: 1.6 }}>
-                    New patient chats will appear here as soon as messages arrive.
+                    {activeTab === 'active'
+                      ? 'New patient chats will appear here as soon as messages arrive.'
+                      : 'Removed conversations will appear here until you recover or permanently delete them.'}
                   </p>
                 </div>
               ) : (
@@ -584,7 +732,7 @@ export function ChatPage() {
 
             <div className="border-t px-4 py-3" style={{ borderColor: '#E8F1FF', background: '#F8FBFF' }}>
               <span style={{ fontFamily: 'var(--font-body)', color: '#6B7A99', fontSize: '0.76rem' }}>
-                Showing {filteredConversations.length} of {conversations.length} conversation{conversations.length !== 1 ? 's' : ''}
+                Showing {filteredConversations.length} of {visibleConversations.length} conversation{visibleConversations.length !== 1 ? 's' : ''}
               </span>
             </div>
           </section>
@@ -629,24 +777,62 @@ export function ChatPage() {
                     </div>
 
                     <div className="flex w-full items-center gap-2 sm:w-auto sm:self-start">
-                      <motion.button
-                        whileHover={{ scale: hasSupabaseSession ? 1.03 : 1 }}
-                        whileTap={{ scale: hasSupabaseSession ? 0.97 : 1 }}
-                        onClick={() => setShowDeleteConfirm(true)}
-                        disabled={deletingChat || !hasSupabaseSession}
-                        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border px-3.5 py-2.5 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-                        style={{
-                          background: '#FFF1F2',
-                          borderColor: '#FECACA',
-                          color: '#DC2626',
-                          fontFamily: 'var(--font-body)',
-                          fontSize: '0.82rem',
-                          fontWeight: 700,
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                        Delete
-                      </motion.button>
+                      {activeTab === 'active' ? (
+                        <motion.button
+                          whileHover={{ scale: 1.03 }}
+                          whileTap={{ scale: 0.97 }}
+                          onClick={() => setShowRemoveConfirm(true)}
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border px-3.5 py-2.5 sm:w-auto"
+                          style={{
+                            background: '#FFF1F2',
+                            borderColor: '#FECACA',
+                            color: '#DC2626',
+                            fontFamily: 'var(--font-body)',
+                            fontSize: '0.82rem',
+                            fontWeight: 700,
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                          Remove
+                        </motion.button>
+                      ) : (
+                        <>
+                          <motion.button
+                            whileHover={{ scale: 1.03 }}
+                            whileTap={{ scale: 0.97 }}
+                            onClick={handleRecoverConversation}
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border px-3.5 py-2.5 sm:w-auto"
+                            style={{
+                              background: '#ECFDF5',
+                              borderColor: '#A7F3D0',
+                              color: '#059669',
+                              fontFamily: 'var(--font-body)',
+                              fontSize: '0.82rem',
+                              fontWeight: 700,
+                            }}
+                          >
+                            Recover
+                          </motion.button>
+                          <motion.button
+                            whileHover={{ scale: hasSupabaseSession ? 1.03 : 1 }}
+                            whileTap={{ scale: hasSupabaseSession ? 0.97 : 1 }}
+                            onClick={() => setShowPermanentDeleteConfirm(true)}
+                            disabled={deletingChat || !hasSupabaseSession}
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border px-3.5 py-2.5 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+                            style={{
+                              background: '#FFF1F2',
+                              borderColor: '#FECACA',
+                              color: '#DC2626',
+                              fontFamily: 'var(--font-body)',
+                              fontSize: '0.82rem',
+                              fontWeight: 700,
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Delete
+                          </motion.button>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -707,9 +893,11 @@ export function ChatPage() {
                               handleSend();
                             }
                           }}
-                          disabled={!hasSupabaseSession}
+                          disabled={!hasSupabaseSession || activeTab === 'deleted'}
                           placeholder={
-                            hasSupabaseSession
+                            activeTab === 'deleted'
+                              ? 'Recover this conversation to send replies again'
+                              : hasSupabaseSession
                               ? `Reply to ${selected.patientName || selected.patientEmail}...`
                               : 'Supabase sign-in required before replies can be sent'
                           }
@@ -723,7 +911,7 @@ export function ChatPage() {
                             whileHover={{ scale: message.trim() && !sending && hasSupabaseSession ? 1.03 : 1 }}
                             whileTap={{ scale: message.trim() && !sending && hasSupabaseSession ? 0.97 : 1 }}
                             onClick={handleSend}
-                            disabled={!message.trim() || sending || !hasSupabaseSession}
+                            disabled={!message.trim() || sending || !hasSupabaseSession || activeTab === 'deleted'}
                             className="inline-flex items-center justify-center gap-2 rounded-2xl px-4 py-3 text-white disabled:cursor-not-allowed disabled:opacity-60"
                             style={{
                               background: message.trim() && !sending && hasSupabaseSession

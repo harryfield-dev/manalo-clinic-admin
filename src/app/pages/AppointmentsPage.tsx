@@ -162,6 +162,17 @@ function isSunday(date: string) {
   return new Date(`${date}T00:00:00`).getDay() === 0;
 }
 
+// ✅ Interface OUTSIDE - before the function
+interface WalkInSlot {
+  value: string;
+  label: string;
+  bookedCount: number;
+  doctorBookedCount: number;
+  disabled: boolean;
+  isLunchHour?: boolean;
+}
+
+// ✅ Function comes AFTER the interface
 function getWalkInSlots(selectedDate: string, appointments: Appointment[], doctorName: string): WalkInSlot[] {
   if (!selectedDate || isSunday(selectedDate)) return [];
 
@@ -185,6 +196,9 @@ function getWalkInSlots(selectedDate: string, appointments: Appointment[], docto
       (appointment) => normalizeTimeValue(appointment.time) === value,
     );
 
+    // ✅ isLunchHour inside the loop
+    const isLunchHour = current >= timeToMinutes("12:00") && current < timeToMinutes("13:00");
+
     slots.push({
       value,
       label: formatTimeLabel(value),
@@ -192,12 +206,14 @@ function getWalkInSlots(selectedDate: string, appointments: Appointment[], docto
       doctorBookedCount: doctorName
         ? slotAppointments.filter((appointment) => appointment.doctorName === doctorName).length
         : 0,
-      disabled: selectedDate === today && current <= nowMinutes,
+      disabled: isLunchHour || (selectedDate === today && current <= nowMinutes),
+      isLunchHour,
     });
   }
 
   return slots;
 }
+
 
 /* ─── Field component ────────────────────────────────── */
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -532,7 +548,6 @@ function WalkInModal({
                       <option value="">Select gender</option>
                       <option value="male">Male</option>
                       <option value="female">Female</option>
-                      <option value="other">Other</option>
                     </select>
                   </Field>
                 </div>
@@ -742,7 +757,7 @@ function WalkInModal({
                               </div>
                             )}
                             <div style={{ fontFamily: "var(--font-body)", color: slot.disabled ? "#B45309" : isSelected ? "#1B4FD8" : "#059669", fontSize: "0.7rem", fontWeight: 700, marginTop: 8, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                              {slot.disabled ? "Passed" : isSelected ? "Selected" : "Available"}
+                              {slot.disabled ? "Lunch Break" : isSelected ? "Selected" : "Available"}
                             </div>
                           </button>
                         );
@@ -1263,19 +1278,17 @@ export function AppointmentsPage() {
     }
   };
 
-  const filtered = useMemo(() => {
-    return data.filter((a) => {
-      const matchSearch =
-        a.patientName.toLowerCase().includes(search.toLowerCase()) ||
-        a.doctorName.toLowerCase().includes(search.toLowerCase());
-      const matchStatus = filterStatus === "all" || a.status === filterStatus;
-      const matchDoctor = filterDoctor === "all" || a.doctorName === filterDoctor;
-      const matchDate = !filterDate || a.date === filterDate;
-      // "all" shows non-completed; specific status filters show that status
-      if (filterStatus === "all") return matchSearch && matchDoctor && matchDate && a.status !== "completed";
-      return matchSearch && matchStatus && matchDoctor && matchDate;
-    });
-  }, [data, search, filterStatus, filterDoctor, filterDate]);
+const filtered = useMemo(() => {
+  return data.filter((a) => {
+    const matchSearch =
+      a.patientName.toLowerCase().includes(search.toLowerCase()) ||
+      a.doctorName.toLowerCase().includes(search.toLowerCase());
+    const matchStatus = filterStatus === "all" || a.status === filterStatus;
+    const matchDoctor = filterDoctor === "all" || a.doctorName === filterDoctor;
+    const matchDate = !filterDate || a.date === filterDate;
+    return matchSearch && matchStatus && matchDoctor && matchDate;
+  });
+}, [data, search, filterStatus, filterDoctor, filterDate]);
 
   const filteredDeleted = useMemo(() => {
     return deletedAppointments.filter((a) => {
@@ -1396,7 +1409,7 @@ export function AppointmentsPage() {
         ))}
         {activeTab === "active" &&
           [
-            { key: "all", label: "All", count: data.filter((a) => a.status !== "completed").length },
+            { key: "all", label: "All", count: data.length },
             ...Object.entries(statusConfig).map(([k, v]) => ({ key: k, label: v.label, count: statusCounts[k] || 0 })),
           ].map((item) => (
             <motion.button
@@ -1849,8 +1862,8 @@ export function AppointmentsPage() {
       <ConfirmModal
         open={!!appointmentToRemove}
         title={`Remove ${appointmentToRemove?.patientName || "appointment"}?`}
-        description="This appointment will be hidden from the main list and moved to Recently Deleted."
-        confirmLabel="Move to Recently Deleted"
+        description="Are you sure do you want to remove this item?"
+        confirmLabel="Remove"
         variant="danger"
         onConfirm={handleRemoveAppointment}
         onCancel={() => setAppointmentToRemove(null)}
@@ -1866,7 +1879,7 @@ export function AppointmentsPage() {
       <ConfirmModal
         open={!!appointmentToDeletePermanently}
         title={`Permanently delete ${appointmentToDeletePermanently?.patientName || "appointment"}?`}
-        description="This will permanently delete the appointment from the database."
+        description="This will permanently delete the appointment."
         confirmLabel="Permanently Delete"
         variant="danger"
         onConfirm={handlePermanentDeleteAppointment}

@@ -1,12 +1,24 @@
+import { useState, useEffect } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Toaster } from 'sonner';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { LoginPage } from './pages/LoginPage';
+import { LoginPage, ForgotPasswordPage, ResetPasswordPage } from './pages';
 import { Layout } from './components/Layout';
 import { MAINTENANCE_MODE } from './lib/maintenance';
 import { MaintenancePage } from './MaintenancePage';
+
+// ── which page to show when logged out ────────────────────────
+type PublicPage = 'login' | 'forgot-password' | 'reset-password';
+
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
+  const [publicPage, setPublicPage] = useState<PublicPage>('login');
+
+  // expose navigation globally so any page can call window.__navigate(...)
+  useEffect(() => {
+    (window as any).__navigate = setPublicPage;
+    return () => { delete (window as any).__navigate; };
+  }, []);
 
   if (isLoading) {
     return (
@@ -27,31 +39,16 @@ function AppContent() {
               animate={{ rotate: 360 }}
               transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
               style={{
-                width: 28,
-                height: 28,
-                borderRadius: '50%',
+                width: 28, height: 28, borderRadius: '50%',
                 border: '3px solid rgba(255,255,255,0.3)',
                 borderTopColor: '#fff',
               }}
             />
           </div>
-          <div
-            style={{
-              fontFamily: 'var(--font-heading)',
-              color: '#0A2463',
-              fontSize: '1.1rem',
-              fontWeight: 700,
-            }}
-          >
+          <div style={{ fontFamily: 'var(--font-heading)', color: '#0A2463', fontSize: '1.1rem', fontWeight: 700 }}>
             Manalo Medical Clinic
           </div>
-          <div
-            style={{
-              fontFamily: 'var(--font-body)',
-              color: '#6B7A99',
-              fontSize: '0.875rem',
-            }}
-          >
+          <div style={{ fontFamily: 'var(--font-body)', color: '#6B7A99', fontSize: '0.875rem' }}>
             Loading portal...
           </div>
         </motion.div>
@@ -64,9 +61,7 @@ function AppContent() {
       {isAuthenticated ? (
         <motion.div
           key="portal"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           transition={{ duration: 0.3 }}
           style={{ height: '100vh' }}
         >
@@ -74,13 +69,22 @@ function AppContent() {
         </motion.div>
       ) : (
         <motion.div
-          key="login"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          key={publicPage}
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           transition={{ duration: 0.3 }}
         >
-          <LoginPage />
+          {publicPage === 'login' && (
+            <LoginPage onForgotPassword={() => setPublicPage('forgot-password')} />
+          )}
+          {publicPage === 'forgot-password' && (
+            <ForgotPasswordPage
+              onBack={() => setPublicPage('login')}
+              onVerified={() => setPublicPage('reset-password')}
+            />
+          )}
+          {publicPage === 'reset-password' && (
+            <ResetPasswordPage onDone={() => setPublicPage('login')} />
+          )}
         </motion.div>
       )}
     </AnimatePresence>
@@ -88,7 +92,6 @@ function AppContent() {
 }
 
 export default function App() {
-  // Maintenance mode bypasses all providers and auth logic entirely
   if (MAINTENANCE_MODE) return <MaintenancePage />;
 
   return (

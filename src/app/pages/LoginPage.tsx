@@ -9,7 +9,7 @@ const C = {
   navy:      '#0A2463',
   blue:      '#1B4FD8',
   blueLight: '#3A86FF',
-  bg:        '#F0F4FF',        // very faint blue-tinted page bg
+  bg:        '#F0F4FF',
   card:      '#FFFFFF',
   border:    '#DDE5F8',
   inputBg:   '#F6F9FF',
@@ -35,7 +35,11 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function LoginPage() {
+interface LoginPageProps {
+  onForgotPassword: () => void;
+}
+
+export function LoginPage({ onForgotPassword }: LoginPageProps) {
   const { login, loginTimestamp, user } = useAuth();
   const [email,        setEmail]        = useState('');
   const [password,     setPassword]     = useState('');
@@ -75,7 +79,6 @@ export function LoginPage() {
     setIsLoading(false);
   };
 
-  /* shared input focus/blur border logic */
   const onFocus = (e: React.FocusEvent<HTMLInputElement>) => {
     e.currentTarget.style.borderColor = C.blue;
     e.currentTarget.style.boxShadow   = `0 0 0 3px rgba(27,79,216,0.10)`;
@@ -88,7 +91,6 @@ export function LoginPage() {
     e.currentTarget.style.boxShadow   = 'none';
   };
 
-  /* ── shared input style builder ─────────────────────────── */
   const inputStyle = (hasError: boolean): React.CSSProperties => ({
     width:          '100%',
     paddingTop:     '0.65rem',
@@ -107,7 +109,6 @@ export function LoginPage() {
   });
 
   return (
-    /* ── page shell ─────────────────────────────────────────── */
     <div style={{
       minHeight:       '100vh',
       display:         'flex',
@@ -150,7 +151,6 @@ export function LoginPage() {
 
         {/* ── brand header ─────────────────────────────────── */}
         <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-          {/* logo pill */}
           <div style={{ display: 'inline-flex', justifyContent: 'center', marginBottom: '1.25rem' }}>
             <div style={{
               width:        '3.25rem',
@@ -290,6 +290,7 @@ export function LoginPage() {
                 }
               </button>
             </div>
+
             <AnimatePresence>
               {touched.password && !password.trim() && (
                 <motion.p
@@ -300,6 +301,28 @@ export function LoginPage() {
                 </motion.p>
               )}
             </AnimatePresence>
+
+            {/* ── forgot password button ── */}
+            <div style={{ textAlign: 'right', marginTop: '0.4rem' }}>
+              <button
+                type="button"
+                onClick={onForgotPassword}
+                style={{
+                  fontSize:       '0.72rem',
+                  color:          C.blue,
+                  background:     'none',
+                  border:         'none',
+                  cursor:         'pointer',
+                  fontWeight:     500,
+                  padding:        0,
+                  fontFamily:     'var(--font-body)',
+                }}
+                onMouseOver={e => (e.currentTarget.style.textDecoration = 'underline')}
+                onMouseOut={e  => (e.currentTarget.style.textDecoration = 'none')}
+              >
+                Forgot password?
+              </button>
+            </div>
           </div>
 
           {/* error banner */}

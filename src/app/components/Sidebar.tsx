@@ -193,7 +193,7 @@ export function Sidebar({ currentPage, onNavigate }: SidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-4 overflow-y-auto">
+      <nav className="flex-1 px-3 py-4">
         {/* Main Menu */}
         <div style={{ color: '#93BCFF', fontSize: '0.65rem', letterSpacing: '0.1em', padding: '0 12px', marginBottom: '8px', fontFamily: 'var(--font-body)', fontWeight: 600 }}>
           MAIN MENU

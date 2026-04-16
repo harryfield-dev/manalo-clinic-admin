@@ -3,13 +3,25 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Search, ChevronDown, User, Phone, Mail, MapPin, Pill, AlertCircle, FileText, Calendar, Stethoscope, X, Eye, Shield, Loader2, Trash2, Star, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { ConfirmModal } from '../components/ui/ConfirmModal';
-import { Patient, Consultation } from '../data/mockData';
+import { Patient } from '../data/mockData';
 import { formatPhilippineMobileForDisplay } from '../lib/philippinePhone';
 import { getPatientIdentityKey, inferRegistrationSource } from '../lib/patientIdentity';
 import { supabase } from '../lib/supabase';
 
+interface PatientConsultation {
+  id: string;
+  date: string;
+  time?: string;
+  doctorName: string;
+  type: string;
+  registrationSource: 'online' | 'walk-in';
+  registeredAt?: string;
+  status?: string;
+}
+
 // Extended patient type with consultation date
-interface PatientWithConsultDate extends Patient {
+interface PatientWithConsultDate extends Omit<Patient, 'consultations'> {
+  consultations: PatientConsultation[];
   lastConsultationDate?: string;
   identityKey?: string;
   recordOrigin?: 'patients' | 'appointments' | 'patient_walkin';
@@ -60,8 +72,67 @@ function formatRegisteredDate(value: string) {
   });
 }
 
-function ConsultationCard({ consultation, index }: { consultation: Consultation; index: number }) {
+function formatConsultationDate(value: string) {
+  if (!value) return 'Unknown';
+  return new Date(value).toLocaleDateString('en-PH', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+function normalizeTimeValue(value?: string) {
+  const trimmed = value?.trim();
+  if (!trimmed) return '';
+
+  const meridiemMatch = trimmed.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (meridiemMatch) {
+    let hours = Number(meridiemMatch[1]);
+    const minutes = Number(meridiemMatch[2]);
+    const period = meridiemMatch[3].toUpperCase();
+
+    if (period === 'PM' && hours !== 12) hours += 12;
+    if (period === 'AM' && hours === 12) hours = 0;
+
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  }
+
+  const [hours = '0', minutes = '0'] = trimmed.split(':');
+  return `${String(Number(hours)).padStart(2, '0')}:${String(Number(minutes)).padStart(2, '0')}`;
+}
+
+function formatConsultationTime(value?: string) {
+  const normalized = normalizeTimeValue(value);
+  if (!normalized) return 'Not set';
+
+  const [hours, minutes] = normalized.split(':').map(Number);
+  const period = hours >= 12 ? 'PM' : 'AM';
+  const displayHour = hours % 12 === 0 ? 12 : hours % 12;
+  return `${displayHour}:${String(minutes).padStart(2, '0')} ${period}`;
+}
+
+function formatConsultationType(value?: string) {
+  if (!value) return 'General Check-up';
+
+  return value
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function ConsultationCard({
+  consultation,
+  index,
+  patientName,
+}: {
+  consultation: PatientConsultation;
+  index: number;
+  patientName: string;
+}) {
   const [expanded, setExpanded] = useState(index === 0);
+  const sourceBadge = sourceConfig[consultation.registrationSource] || sourceConfig.online;
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -80,9 +151,9 @@ function ConsultationCard({ consultation, index }: { consultation: Consultation;
             <Stethoscope className="w-4 h-4" style={{ color: expanded ? '#fff' : '#6B7A99' }} />
           </div>
           <div>
-            <div style={{ fontFamily: 'var(--font-body)', color: '#0A2463', fontSize: '0.875rem', fontWeight: 600 }}>{consultation.diagnosis}</div>
+            <div style={{ fontFamily: 'var(--font-body)', color: '#0A2463', fontSize: '0.875rem', fontWeight: 600 }}>{formatConsultationType(consultation.type)}</div>
             <div style={{ fontFamily: 'var(--font-body)', color: '#6B7A99', fontSize: '0.75rem' }}>
-              {new Date(consultation.date).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })} · {consultation.doctorName}
+              {formatConsultationDate(consultation.date)} · {formatConsultationTime(consultation.time)}
             </div>
           </div>
         </div>
@@ -102,9 +173,13 @@ function ConsultationCard({ consultation, index }: { consultation: Consultation;
             <div className="p-4 space-y-4" style={{ background: '#fff' }}>
               <div className="space-y-3">
                 {[
-                  { label: 'Prescription', value: consultation.prescription, icon: Pill, color: '#7C3AED', bg: '#EDE9FE' },
-                  { label: 'Clinical Notes', value: consultation.notes, icon: FileText, color: '#1B4FD8', bg: '#E8F1FF' },
-                  ...(consultation.followUpDate ? [{ label: 'Follow-up Date', value: new Date(consultation.followUpDate).toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }), icon: Calendar, color: '#059669', bg: '#D1FAE5' }] : []),
+                  { label: 'Patient', value: patientName, icon: User, color: '#1B4FD8', bg: '#E8F1FF' },
+                  { label: 'Doctor', value: consultation.doctorName || 'Unassigned', icon: Stethoscope, color: '#7C3AED', bg: '#EDE9FE' },
+                  { label: 'Source', value: sourceBadge.label, icon: FileText, color: sourceBadge.text, bg: sourceBadge.bg },
+                  { label: 'Type', value: formatConsultationType(consultation.type), icon: Pill, color: '#7C3AED', bg: '#F5F3FF' },
+                  { label: 'Date', value: formatConsultationDate(consultation.date), icon: Calendar, color: '#059669', bg: '#D1FAE5' },
+                  { label: 'Time', value: formatConsultationTime(consultation.time), icon: Calendar, color: '#0EA5E9', bg: '#E0F2FE' },
+                  { label: 'Registered', value: formatRegisteredDate(consultation.registeredAt || consultation.date), icon: Calendar, color: '#F59E0B', bg: '#FEF3C7' },
                 ].map(item => {
                   const Icon = item.icon;
                   return (
@@ -128,7 +203,7 @@ function ConsultationCard({ consultation, index }: { consultation: Consultation;
   );
 }
 
-function PatientDetailModal({ patient, onClose }: { patient: Patient; onClose: () => void }) {
+function PatientDetailModal({ patient, onClose }: { patient: PatientWithConsultDate; onClose: () => void }) {
   const [showIdLightbox, setShowIdLightbox] = useState(false);
   const [ratings, setRatings] = useState<AppointmentRating[]>([]);
   const [ratingsLoading, setRatingsLoading] = useState(true);
@@ -281,7 +356,7 @@ function PatientDetailModal({ patient, onClose }: { patient: Patient; onClose: (
               ) : (
                 <div className="space-y-3">
                   {patient.consultations.map((c, i) => (
-                    <ConsultationCard key={c.id} consultation={c} index={i} />
+                    <ConsultationCard key={c.id} consultation={c} index={i} patientName={patient.name} />
                   ))}
                 </div>
               )}
@@ -439,6 +514,7 @@ export function PatientsPage() {
     }
 
     const apptMap = new Map<string, any>();
+    const consultationsByIdentity = new Map<string, PatientConsultation[]>();
     for (const appointment of appointmentRows || []) {
       const key = getPatientIdentityKey({
         email: appointment.patient_email,
@@ -450,6 +526,35 @@ export function PatientsPage() {
       if (!apptMap.has(key)) {
         apptMap.set(key, appointment);
       }
+
+      const registrationSource = inferRegistrationSource({
+        email: appointment.patient_email,
+        registrationSource: appointment.registration_source,
+      });
+      const consultationEntry: PatientConsultation = {
+        id: appointment.id,
+        date: appointment.date,
+        time: appointment.time,
+        doctorName: appointment.doctor_name || 'Unassigned',
+        type: appointment.type || 'general-checkup',
+        registrationSource,
+        registeredAt: appointment.created_at,
+        status: appointment.status || undefined,
+      };
+
+      if (!consultationsByIdentity.has(key)) {
+        consultationsByIdentity.set(key, []);
+      }
+
+      consultationsByIdentity.get(key)!.push(consultationEntry);
+    }
+
+    for (const records of consultationsByIdentity.values()) {
+      records.sort((a, b) => {
+        const aStamp = new Date(`${a.date || ''}T${normalizeTimeValue(a.time) || '00:00'}`).getTime();
+        const bStamp = new Date(`${b.date || ''}T${normalizeTimeValue(b.time) || '00:00'}`).getTime();
+        return bStamp - aStamp;
+      });
     }
 
     const patientKeys = new Set(
@@ -516,33 +621,13 @@ export function PatientsPage() {
     }
 
     return Promise.all(mergedRows.map(async (patient: any) => {
-      let consultations: Consultation[] = [];
-
-        if (patient.email) {
-          const { data: consultData } = await supabase
-            .from('consultations')
-            .select('*')
-            .eq('patient_email', patient.email)
-            .order('date', { ascending: false });
-
-          consultations = (consultData || []).map((consultation: any) => ({
-            id: consultation.id,
-            date: consultation.date,
-            doctorName: consultation.doctor_name,
-            diagnosis: consultation.diagnosis,
-            prescription: consultation.prescription,
-            notes: consultation.notes,
-            followUpDate: consultation.follow_up_date || undefined,
-            vitals: { bp: '', temp: '', weight: '', height: '' },
-          }));
-        }
-
         const identityKey = patient.identity_key || getPatientIdentityKey({
           email: patient.email,
           phone: patient.contact_number,
           name: patient.full_name,
           fallbackId: patient.id,
         });
+        const consultations = consultationsByIdentity.get(identityKey) || [];
         const latestAppt = apptMap.get(identityKey);
         const emailLower = (patient.email || '').toLowerCase();
         const ratingInfo = emailLower ? ratingMap.get(emailLower) : null;

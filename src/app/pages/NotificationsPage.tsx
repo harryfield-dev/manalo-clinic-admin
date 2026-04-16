@@ -437,22 +437,6 @@ export function NotificationsPage({ onNavigate }: { onNavigate?: (page: string) 
         onCancel={() => setConfirmDeleteAll(false)}
       />
 
-      {/* Unread badge */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          {unreadCount > 0 && (
-            <motion.div
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              className="w-7 h-7 rounded-full flex items-center justify-center text-white"
-              style={{ background: 'linear-gradient(135deg, #EF4444, #DC2626)', fontFamily: 'var(--font-body)', fontSize: '0.8rem', fontWeight: 700 }}
-            >
-              {unreadCount > 99 ? '99+' : unreadCount}
-            </motion.div>
-          )}
-        </div>
-      </div>
-
       {/* Tabs + Filters + Action Buttons */}
       <div className="flex flex-wrap items-center gap-2">
         {[

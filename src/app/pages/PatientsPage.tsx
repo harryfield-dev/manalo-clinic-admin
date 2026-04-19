@@ -854,35 +854,14 @@ export function PatientsPage() {
     if (!permanentDeleteTarget) return;
 
     try {
-      const table = permanentDeleteTarget.recordOrigin === 'patient_walkin' ? 'patient_walkin' : 'patients';
-      const now = new Date().toISOString();
-
-      // Soft-delete all appointments linked by patient_id (clear FK first, then mark deleted)
-      if (table === 'patients') {
-        await supabase
-          .from('appointments')
-          .update({ patient_id: null, deleted_at: now })
-          .eq('patient_id', permanentDeleteTarget.id)
-          .is('deleted_at', null);
-      }
-
-      // Soft-delete remaining appointments matched by email (catches cases where patient_id was already nulled)
-      if (permanentDeleteTarget.email) {
-        await supabase
-          .from('appointments')
-          .update({ deleted_at: now })
-          .eq('patient_email', permanentDeleteTarget.email)
-          .is('deleted_at', null);
-      }
-
-      const { error } = await supabase.from(table).delete().eq('id', permanentDeleteTarget.id);
-      if (error) throw error;
+      // Only remove the record from the Recently Deleted list view.
+      // The patient's database row and account are preserved (deleted_at remains set).
+      // This prevents the patient's account from being fully wiped from the database.
       removePatientLocally(permanentDeleteTarget);
-      await loadPatients();
-      toast.success(`${permanentDeleteTarget.name} was permanently deleted.`);
+      toast.success(`${permanentDeleteTarget.name} was removed from the Recently Deleted list.`);
       setPermanentDeleteTarget(null);
     } catch (error: any) {
-      toast.error(error?.message || 'Failed to permanently delete patient record.');
+      toast.error(error?.message || 'Failed to remove patient record from list.');
     }
   };
 
@@ -1068,7 +1047,7 @@ export function PatientsPage() {
                               <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.97 }} onClick={e => { e.stopPropagation(); setPermanentDeleteTarget(patient); }}
                                 className="flex items-center gap-1.5 rounded-lg px-3 py-2" style={{ background: '#FEE2E2', color: '#DC2626' }}>
                                 <Trash2 className="w-3.5 h-3.5" />
-                                <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.75rem', fontWeight: 700 }}>Delete</span>
+                                <span style={{ fontFamily: 'var(--font-body)', fontSize: '0.75rem', fontWeight: 700 }}>Remove</span>
                               </motion.button>
                             </>
                           )}
@@ -1113,9 +1092,9 @@ export function PatientsPage() {
       />
       <ConfirmModal
         open={!!permanentDeleteTarget}
-        title={`Permanently delete ${permanentDeleteTarget?.name || 'patient record'}?`}
-        description="This will permanently delete the patient record."
-        confirmLabel="Permanently Delete"
+        title={`Remove ${permanentDeleteTarget?.name || 'patient record'} from list?`}
+        description="This will remove the record from the Recently Deleted list. The patient's account and data will remain intact in the database."
+        confirmLabel="Remove from List"
         variant="danger"
         onConfirm={handlePermanentDeletePatient}
         onCancel={() => setPermanentDeleteTarget(null)}

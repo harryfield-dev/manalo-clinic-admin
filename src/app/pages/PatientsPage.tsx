@@ -495,11 +495,15 @@ export function PatientsPage() {
     walkinRows,
     appointmentRows,
     includeAppointmentOnly,
+    deletedPatientRows = [],
+    deletedWalkinRows = [],
   }: {
     patientRows: any[];
     walkinRows: any[];
     appointmentRows: any[];
     includeAppointmentOnly: boolean;
+    deletedPatientRows?: any[];
+    deletedWalkinRows?: any[];
   }) => {
     const { data: allRatings } = await supabase.from('appointment_ratings').select('patient_email, rating');
     const ratingMap = new Map<string, { count: number; sum: number }>();
@@ -514,6 +518,7 @@ export function PatientsPage() {
     }
 
     const apptMap = new Map<string, any>();
+    const idUrlMap = new Map<string, string>(); // best valid_id_url per patient identity
     const consultationsByIdentity = new Map<string, PatientConsultation[]>();
     for (const appointment of appointmentRows || []) {
       const key = getPatientIdentityKey({
@@ -527,26 +532,35 @@ export function PatientsPage() {
         apptMap.set(key, appointment);
       }
 
+      // Track the first non-empty valid_id_url across all appointments for this patient
+      if (!idUrlMap.has(key) && appointment.valid_id_url) {
+        idUrlMap.set(key, appointment.valid_id_url);
+      }
+
       const registrationSource = inferRegistrationSource({
         email: appointment.patient_email,
         registrationSource: appointment.registration_source,
       });
-      const consultationEntry: PatientConsultation = {
-        id: appointment.id,
-        date: appointment.date,
-        time: appointment.time,
-        doctorName: appointment.doctor_name || 'Unassigned',
-        type: appointment.type || 'general-checkup',
-        registrationSource,
-        registeredAt: appointment.created_at,
-        status: appointment.status || undefined,
-      };
 
-      if (!consultationsByIdentity.has(key)) {
-        consultationsByIdentity.set(key, []);
+      // Only completed appointments count as consultations
+      if (appointment.status === 'completed') {
+        const consultationEntry: PatientConsultation = {
+          id: appointment.id,
+          date: appointment.date,
+          time: appointment.time,
+          doctorName: appointment.doctor_name || 'Unassigned',
+          type: appointment.type || 'general-checkup',
+          registrationSource,
+          registeredAt: appointment.created_at,
+          status: appointment.status,
+        };
+
+        if (!consultationsByIdentity.has(key)) {
+          consultationsByIdentity.set(key, []);
+        }
+
+        consultationsByIdentity.get(key)!.push(consultationEntry);
       }
-
-      consultationsByIdentity.get(key)!.push(consultationEntry);
     }
 
     for (const records of consultationsByIdentity.values()) {
@@ -595,9 +609,27 @@ export function PatientsPage() {
         .map((patient: any) => ({ ...patient, _fromWalkinTable: true, registration_source: 'walk-in' })),
     ];
 
+    // Build exclusion sets from deleted records so they are never re-created as ghost Walk-In patients
+    const deletedPatientKeys = new Set(
+      deletedPatientRows.map((p: any) =>
+        getPatientIdentityKey({ email: p.email, phone: p.contact_number, name: p.full_name, fallbackId: p.id }),
+      ),
+    );
+    const deletedWalkinKeys = new Set(
+      deletedWalkinRows.map((p: any) =>
+        getPatientIdentityKey({ email: p.email, phone: p.contact_number, name: p.full_name, fallbackId: p.id }),
+      ),
+    );
+
     if (includeAppointmentOnly) {
       for (const [key, appointment] of apptMap.entries()) {
-        if (!patientKeys.has(key) && !walkinKeys.has(key)) {
+        // Skip if the patient exists in active records OR has been soft-deleted
+        if (
+          !patientKeys.has(key) &&
+          !walkinKeys.has(key) &&
+          !deletedPatientKeys.has(key) &&
+          !deletedWalkinKeys.has(key)
+        ) {
           mergedRows.push({
             id: appointment.id,
             full_name: appointment.patient_name || 'Walk-in Patient',
@@ -645,7 +677,7 @@ export function PatientsPage() {
           emergencyContact: `${patient.emergency_contact_name || ''} - ${patient.emergency_contact_number || ''}`,
           createdAt: patient.created_at,
           consultations,
-          validIdUrl: patient.valid_id_url || latestAppt?.valid_id_url || '',
+          validIdUrl: patient.valid_id_url || idUrlMap.get(identityKey) || latestAppt?.valid_id_url || '',
           lastConsultationDate: latestAppt?.date || patient._apptDate || undefined,
           identityKey,
           avgRating: ratingInfo ? ratingInfo.sum / ratingInfo.count : null,
@@ -665,7 +697,7 @@ export function PatientsPage() {
     try {
       const [patientsRes, appointmentsRes, walkinsRes, deletedPatientsRes, deletedWalkinsRes] = await Promise.all([
         supabase.from('patients').select('*').is('deleted_at', null).order('created_at', { ascending: false }),
-        supabase.from('appointments').select('*').is('deleted_at', null).in('status', ['approved', 'completed']).order('created_at', { ascending: false }),
+        supabase.from('appointments').select('*').is('deleted_at', null).order('created_at', { ascending: false }),
         supabase.from('patient_walkin').select('*').is('deleted_at', null).order('created_at', { ascending: false }),
         supabase.from('patients').select('*').not('deleted_at', 'is', null).order('deleted_at', { ascending: false }),
         supabase.from('patient_walkin').select('*').not('deleted_at', 'is', null).order('deleted_at', { ascending: false }),
@@ -683,11 +715,13 @@ export function PatientsPage() {
           walkinRows: walkinsRes.data || [],
           appointmentRows: appointmentsRes.data || [],
           includeAppointmentOnly: true,
+          deletedPatientRows: deletedPatientsRes.data || [],
+          deletedWalkinRows: deletedWalkinsRes.data || [],
         }),
         mapRowsToPatients({
           patientRows: deletedPatientsRes.data || [],
           walkinRows: deletedWalkinsRes.data || [],
-          appointmentRows: [],
+          appointmentRows: appointmentsRes.data || [],
           includeAppointmentOnly: false,
         }),
       ]);
@@ -769,6 +803,16 @@ export function PatientsPage() {
 
   const updatePatientDeletionState = async (patient: PatientWithConsultDate, deletedAt: string | null) => {
     const table = patient.recordOrigin === 'patient_walkin' ? 'patient_walkin' : 'patients';
+
+    // Before soft-deleting, release the FK reference so appointments aren't blocked
+    if (deletedAt !== null && table === 'patients') {
+      const { error: unlinkError } = await supabase
+        .from('appointments')
+        .update({ patient_id: null })
+        .eq('patient_id', patient.id);
+      if (unlinkError) throw unlinkError;
+    }
+
     const query = deletedAt === null
       ? supabase.from(table).update({ deleted_at: null }).eq('id', patient.id)
       : supabase.from(table).update({ deleted_at: deletedAt }).eq('id', patient.id);
@@ -811,6 +855,26 @@ export function PatientsPage() {
 
     try {
       const table = permanentDeleteTarget.recordOrigin === 'patient_walkin' ? 'patient_walkin' : 'patients';
+      const now = new Date().toISOString();
+
+      // Soft-delete all appointments linked by patient_id (clear FK first, then mark deleted)
+      if (table === 'patients') {
+        await supabase
+          .from('appointments')
+          .update({ patient_id: null, deleted_at: now })
+          .eq('patient_id', permanentDeleteTarget.id)
+          .is('deleted_at', null);
+      }
+
+      // Soft-delete remaining appointments matched by email (catches cases where patient_id was already nulled)
+      if (permanentDeleteTarget.email) {
+        await supabase
+          .from('appointments')
+          .update({ deleted_at: now })
+          .eq('patient_email', permanentDeleteTarget.email)
+          .is('deleted_at', null);
+      }
+
       const { error } = await supabase.from(table).delete().eq('id', permanentDeleteTarget.id);
       if (error) throw error;
       removePatientLocally(permanentDeleteTarget);

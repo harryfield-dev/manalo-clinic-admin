@@ -65,6 +65,12 @@ const statusConfig = {
     border: "#C7D7F8",
     label: "Completed",
   },
+  cancelled: {
+    bg: "#F3F4F6",
+    text: "#6B7280",
+    border: "#E5E7EB",
+    label: "Cancelled",
+  },
 };
 
 const idStatusConfig = {
@@ -82,7 +88,7 @@ const typeConfig: Record<string, { bg: string; text: string; label: string }> = 
 const WALK_IN_START = "07:00";
 const WALK_IN_END = "14:00";
 const WALK_IN_SLOT_INTERVAL = 30;
-const ACTIVE_SLOT_STATUSES: AppointmentStatus[] = ["pending", "approved", "completed"];
+const ACTIVE_SLOT_STATUSES: AppointmentStatus[] = ["pending", "approved", "completed", "cancelled"];
 const sourceConfig = {
   online: { bg: "#DBEAFE", text: "#1D4ED8", label: "Online" },
   "walk-in": { bg: "#FEF3C7", text: "#B45309", label: "Walk-In" },
@@ -1367,6 +1373,7 @@ const filtered = useMemo(() => {
     { key: 'approved', label: 'Approved', count: statusCounts.approved || 0, color: '#059669', bg: '#D1FAE5' },
     { key: 'rejected', label: 'Rejected', count: statusCounts.rejected || 0, color: '#DC2626', bg: '#FEE2E2' },
     { key: 'completed', label: 'Completed', count: statusCounts.completed || 0, color: '#1B4FD8', bg: '#E8F1FF' },
+    { key: 'cancelled', label: 'Cancelled', count: statusCounts.cancelled || 0, color: '#6B7280', bg: '#F3F4F6' },
   ];
 
   return (
@@ -1754,7 +1761,7 @@ const filtered = useMemo(() => {
                       </motion.button>
                     </div>
                   )}
-                  {activeTab === "active" && (apt.status === "rejected" || apt.status === "completed") && (
+                  {activeTab === "active" && (apt.status === "rejected" || apt.status === "completed" || apt.status === "cancelled") && (
                     <div className="flex items-center gap-2 flex-shrink-0">
                       <motion.button
                         whileHover={{ scale: 1.05 }}

@@ -1213,6 +1213,7 @@ export function AppointmentsPage() {
   const { data: doctorsData } = useDoctors();
   const [search, setSearch] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterSource, setFilterSource] = useState<'all' | 'walk-in'>('all');
   const [filterDoctor, setFilterDoctor] = useState("all");
   const [filterDate, setFilterDate] = useState("");
   const [showFilters, setShowFilters] = useState(false);
@@ -1292,9 +1293,11 @@ const filtered = useMemo(() => {
     const matchStatus = filterStatus === "all" || a.status === filterStatus;
     const matchDoctor = filterDoctor === "all" || a.doctorName === filterDoctor;
     const matchDate = !filterDate || a.date === filterDate;
-    return matchSearch && matchStatus && matchDoctor && matchDate;
+    const aptSource = a.registrationSource || inferRegistrationSource({ email: a.patientEmail });
+    const matchSource = filterSource === 'all' || aptSource === filterSource;
+    return matchSearch && matchStatus && matchDoctor && matchDate && matchSource;
   });
-}, [data, search, filterStatus, filterDoctor, filterDate]);
+}, [data, search, filterStatus, filterDoctor, filterDate, filterSource]);
 
   const filteredDeleted = useMemo(() => {
     return deletedAppointments.filter((a) => {
@@ -1368,6 +1371,11 @@ const filtered = useMemo(() => {
     {} as Record<string, number>,
   );
 
+  const walkInCount = data.filter((a) => {
+    const src = a.registrationSource || inferRegistrationSource({ email: a.patientEmail });
+    return src === 'walk-in';
+  }).length;
+
   const statPills = [
     { key: 'pending', label: 'Pending', count: statusCounts.pending || 0, color: '#D97706', bg: '#FEF3C7' },
     { key: 'approved', label: 'Approved', count: statusCounts.approved || 0, color: '#059669', bg: '#D1FAE5' },
@@ -1414,49 +1422,80 @@ const filtered = useMemo(() => {
             </span>
           </motion.button>
         ))}
-        {activeTab === "active" &&
-          [
-            { key: "all", label: "All", count: data.length },
-            ...Object.entries(statusConfig).map(([k, v]) => ({ key: k, label: v.label, count: statusCounts[k] || 0 })),
-          ].map((item) => (
+        {activeTab === "active" && (
+          <>
+            {[
+              { key: "all", label: "All", count: data.length },
+              ...Object.entries(statusConfig).map(([k, v]) => ({ key: k, label: v.label, count: statusCounts[k] || 0 })),
+            ].map((item) => (
+              <motion.button
+                key={item.key}
+                whileHover={{ y: -1 }}
+                whileTap={{ scale: 0.97 }}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl transition-all"
+                style={{
+                  fontFamily: "var(--font-body)",
+                  fontSize: "0.8rem",
+                  fontWeight: filterStatus === item.key && filterSource === 'all' ? 700 : 500,
+                  background:
+                    filterStatus === item.key && filterSource === 'all'
+                      ? item.key === "all"
+                        ? "#0A2463"
+                        : statusConfig[item.key as keyof typeof statusConfig]?.bg || "#E8F1FF"
+                      : "#fff",
+                  color:
+                    filterStatus === item.key && filterSource === 'all'
+                      ? item.key === "all"
+                        ? "#fff"
+                        : statusConfig[item.key as keyof typeof statusConfig]?.text || "#0A2463"
+                      : "#6B7A99",
+                  border: `1px solid ${filterStatus === item.key && filterSource === 'all' ? "transparent" : "#E8F1FF"}`,
+                }}
+                onClick={() => { setFilterStatus(item.key); setFilterSource('all'); }}
+              >
+                {item.label}
+                <span
+                  className="px-1.5 py-0.5 rounded-md"
+                  style={{
+                    background: filterStatus === item.key && filterSource === 'all' ? "rgba(255,255,255,0.2)" : "#F4F7FF",
+                    fontSize: "0.7rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  {item.count}
+                </span>
+              </motion.button>
+            ))}
+            {/* Walk-In filter chip */}
             <motion.button
-              key={item.key}
-              onClick={() => setFilterStatus(item.key)}
               whileHover={{ y: -1 }}
               whileTap={{ scale: 0.97 }}
+              onClick={() => { setFilterSource(filterSource === 'walk-in' ? 'all' : 'walk-in'); setFilterStatus('all'); }}
               className="flex items-center gap-2 px-4 py-2 rounded-xl transition-all"
               style={{
                 fontFamily: "var(--font-body)",
                 fontSize: "0.8rem",
-                fontWeight: filterStatus === item.key ? 700 : 500,
-                background:
-                  filterStatus === item.key
-                    ? item.key === "all"
-                      ? "#0A2463"
-                      : statusConfig[item.key as keyof typeof statusConfig]?.bg || "#E8F1FF"
-                    : "#fff",
-                color:
-                  filterStatus === item.key
-                    ? item.key === "all"
-                      ? "#fff"
-                      : statusConfig[item.key as keyof typeof statusConfig]?.text || "#0A2463"
-                    : "#6B7A99",
-                border: `1px solid ${filterStatus === item.key ? "transparent" : "#E8F1FF"}`,
+                fontWeight: filterSource === 'walk-in' ? 700 : 500,
+                background: filterSource === 'walk-in' ? "#FEF3C7" : "#fff",
+                color: filterSource === 'walk-in' ? "#B45309" : "#6B7A99",
+                border: `1px solid ${filterSource === 'walk-in' ? "#FDE68A" : "#E8F1FF"}`,
               }}
             >
-              {item.label}
+              Walk-In
               <span
                 className="px-1.5 py-0.5 rounded-md"
                 style={{
-                  background: filterStatus === item.key ? "rgba(255,255,255,0.2)" : "#F4F7FF",
+                  background: filterSource === 'walk-in' ? "rgba(180,83,9,0.12)" : "#F4F7FF",
                   fontSize: "0.7rem",
                   fontWeight: 700,
+                  color: filterSource === 'walk-in' ? "#B45309" : undefined,
                 }}
               >
-                {item.count}
+                {walkInCount}
               </span>
             </motion.button>
-          ))}
+          </>
+        )}
         <motion.button
           whileHover={{ scale: 1.05, boxShadow: "0 8px 24px rgba(27, 79, 216, 0.3)" }}
           whileTap={{ scale: 0.97 }}
